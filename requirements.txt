@@ -5,3 +5,4 @@ scikit-learn==1.6.1
 sentence-transformers
 PyPDF2
 torch
+torchvision
