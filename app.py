@@ -15,7 +15,7 @@ st.set_page_config(
     layout="wide"
 )
 
-MODEL_PATH = "models/binary_hybrid_logistic.pkl"
+MODEL_PATH = "binary_hybrid_logistic.pkl"
 
 # -----------------------------
 # Styling
