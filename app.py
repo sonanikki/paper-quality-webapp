@@ -1,360 +1,421 @@
-
 import os
 import re
 import pickle
+from io import BytesIO
+
 import numpy as np
 import pandas as pd
 import streamlit as st
+from pypdf import PdfReader
 
-from PyPDF2 import PdfReader
-from sentence_transformers import SentenceTransformer
 
+# =========================================================
+# PAGE CONFIG
+# =========================================================
 st.set_page_config(
-    page_title="Research Paper Quality Prediction",
+    page_title="Research Paper Quality Prediction System",
     page_icon="📄",
     layout="wide"
 )
 
 MODEL_PATH = "binary_hybrid_logistic.pkl"
 
-# -----------------------------
-# Styling
-# -----------------------------
+
+# =========================================================
+# STYLING
+# =========================================================
 st.markdown("""
 <style>
-.main-title {
-    font-size: 2.4rem;
-    font-weight: 700;
-    margin-bottom: 0.2rem;
-}
-.sub-title {
-    font-size: 1.05rem;
-    color: #555;
-    margin-bottom: 1.2rem;
-}
-.card {
-    background: #f7f8fb;
-    border: 1px solid #e5e7eb;
-    padding: 1rem 1.2rem;
-    border-radius: 16px;
-    margin-bottom: 1rem;
-}
+    .main-title {
+        font-size: 2.4rem;
+        font-weight: 700;
+        margin-bottom: 0.2rem;
+    }
+    .sub-title {
+        font-size: 1.05rem;
+        color: #666666;
+        margin-bottom: 1.4rem;
+    }
+    .section-card {
+        padding: 1rem 1.2rem;
+        border-radius: 12px;
+        background-color: #f8f9fb;
+        border: 1px solid #e8e8e8;
+        margin-bottom: 1rem;
+    }
+    .result-good {
+        padding: 1rem;
+        border-radius: 12px;
+        background-color: #eaf7ee;
+        border: 1px solid #b8e0c2;
+        color: #145a32;
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+    .result-warn {
+        padding: 1rem;
+        border-radius: 12px;
+        background-color: #fff4e5;
+        border: 1px solid #f5c27a;
+        color: #7a4b00;
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# -----------------------------
-# Cached resources
-# -----------------------------
+
+# =========================================================
+# HELPERS
+# =========================================================
 @st.cache_resource
 def load_model_bundle():
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
+
     with open(MODEL_PATH, "rb") as f:
-        return pickle.load(f)
+        bundle = pickle.load(f)
+    return bundle
+
 
 @st.cache_resource
-def load_embedder(name):
-    return SentenceTransformer(name)
+def load_embedder(embedder_name: str):
+    from sentence_transformers import SentenceTransformer
+    return SentenceTransformer(embedder_name)
 
-# -----------------------------
-# PDF helpers
-# -----------------------------
-def safe_read_pdf(uploaded_file):
+
+def extract_pdf_text(uploaded_file) -> str:
     try:
-        reader = PdfReader(uploaded_file)
-        page_count = len(reader.pages)
-        text_parts = []
+        file_bytes = uploaded_file.read()
+        reader = PdfReader(BytesIO(file_bytes))
+        pages = []
         for page in reader.pages:
-            try:
-                txt = page.extract_text()
-                if txt:
-                    text_parts.append(txt)
-            except Exception:
-                continue
-        return "\\n".join(text_parts), page_count
+            txt = page.extract_text()
+            if txt:
+                pages.append(txt)
+        return "\n".join(pages).strip()
+    except Exception as e:
+        st.warning(f"Could not fully read PDF text: {e}")
+        return ""
+
+
+def safe_float(value, default=0.0):
+    try:
+        if value is None or str(value).strip() == "":
+            return default
+        return float(value)
     except Exception:
-        return "", 0
+        return default
 
-def extract_title_and_abstract(text):
-    if not text.strip():
-        return "", ""
 
-    lines = [x.strip() for x in text.splitlines() if x.strip()]
-    title = lines[0][:250] if lines else ""
+def clean_text(text: str) -> str:
+    if not text:
+        return ""
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
-    abstract = ""
-    m = re.search(r"abstract\\s*(.*?)(introduction|keywords|\\n\\n)", text, re.I | re.S)
-    if m:
-        abstract = m.group(1).strip()
-    else:
-        abstract = text[:1500].strip()
 
-    return title, abstract[:3000]
+def make_combined_text(title: str, abstract_or_text: str) -> str:
+    title = clean_text(title)
+    abstract_or_text = clean_text(abstract_or_text)
+    return f"{title}. {abstract_or_text}".strip()
 
-# -----------------------------
-# Feature helpers
-# -----------------------------
-def word_count(text):
-    return len(re.findall(r"\\b\\w+\\b", text))
 
-def sentence_count(text):
-    return len([x for x in re.split(r"[.!?]+", text) if x.strip()])
-
-def unique_word_count(text):
-    return len(set(re.findall(r"\\b\\w+\\b", text.lower())))
-
-def avg_word_length(text):
-    words = re.findall(r"\\b\\w+\\b", text)
-    if not words:
-        return 0.0
-    return float(np.mean([len(w) for w in words]))
-
-def vocabulary_richness(text):
-    wc = word_count(text)
-    uwc = unique_word_count(text)
-    return float(uwc / wc) if wc else 0.0
-
-def lexical_density(text):
-    words = re.findall(r"\\b\\w+\\b", text.lower())
-    if not words:
-        return 0.0
-    stopwords = {
-        "the","a","an","and","or","but","if","while","with","to","of","in","on",
-        "for","at","by","is","are","was","were","be","been","being","this","that"
+def prepare_single_input_dataframe(
+    title: str,
+    combined_text: str,
+    citation_count,
+    publisher: str,
+    institution_name: str,
+    main_panel: str,
+    uoa_name: str,
+    open_access_status: str,
+):
+    row = {
+        "Title": title,
+        "combined_text": combined_text,
+        "Citation count": safe_float(citation_count, 0),
+        "Publisher": publisher,
+        "Institution name": institution_name,
+        "Main panel": main_panel,
+        "Unit of assessment name": uoa_name,
+        "Open access status": open_access_status,
     }
-    content = [w for w in words if w not in stopwords]
-    return float(len(content) / len(words))
+    return pd.DataFrame([row])
 
-def keyword_count(text, keywords):
-    t = text.lower()
-    total = 0
-    for kw in keywords:
-        total += len(re.findall(rf"\\b{re.escape(kw.lower())}\\b", t))
-    return total
 
-def presence(text, keywords):
-    return 1.0 if keyword_count(text, keywords) > 0 else 0.0
+def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
+    embedder_name = bundle.get("embedder_name", "all-MiniLM-L6-v2")
+    text_feature = bundle.get("text_feature", "combined_text")
+    numeric_features = bundle.get("numeric_features", [])
+    categorical_features = bundle.get("categorical_features", [])
 
-def build_features(full_text, title, abstract, page_count, citation_count):
-    combined = f"{title} {abstract} {full_text}".strip()
-    return {
-        "page_count": float(page_count),
-        "abstract_present": 1.0 if abstract.strip() else 0.0,
-        "word_count": float(word_count(full_text)),
-        "unique_word_count": float(unique_word_count(full_text)),
-        "vocabulary_richness": float(vocabulary_richness(full_text)),
-        "avg_word_length": float(avg_word_length(full_text)),
-        "lexical_density": float(lexical_density(full_text)),
-        "sentence_count": float(sentence_count(full_text)),
-        "introduction_present": presence(full_text, ["introduction"]),
-        "literature_review_present": presence(full_text, ["literature review", "related work"]),
-        "methodology_present": presence(full_text, ["methodology", "methods"]),
-        "results_present": presence(full_text, ["results"]),
-        "discussion_present": presence(full_text, ["discussion"]),
-        "conclusion_present": presence(full_text, ["conclusion", "conclusions"]),
-        "references_present": presence(full_text, ["references", "bibliography"]),
-        "section_count": float(sum([
-            presence(full_text, ["introduction"]),
-            presence(full_text, ["related work", "literature review"]),
-            presence(full_text, ["methodology", "methods"]),
-            presence(full_text, ["results"]),
-            presence(full_text, ["discussion"]),
-            presence(full_text, ["conclusion", "conclusions"]),
-            presence(full_text, ["references", "bibliography"])
-        ])),
-        "experiment_mentions": float(keyword_count(combined, ["experiment", "experiments"])),
-        "dataset_mentions": float(keyword_count(combined, ["dataset", "datasets"])),
-        "evaluation_mentions": float(keyword_count(combined, ["evaluation", "evaluate"])),
-        "validation_mentions": float(keyword_count(combined, ["validation", "validated"])),
-        "benchmark_mentions": float(keyword_count(combined, ["benchmark", "benchmarks"])),
-        "statistical_terms_count": float(keyword_count(combined, ["statistical", "significant", "regression", "variance"])),
-        "p_value_mentions": float(keyword_count(combined, ["p-value", "p value", "p<", "p >"])),
-        "confidence_interval_mentions": float(keyword_count(combined, ["confidence interval"])),
-        "ablation_mentions": float(keyword_count(combined, ["ablation"])),
-        "baseline_mentions": float(keyword_count(combined, ["baseline", "baselines"])),
-        "reproducibility_terms_count": float(keyword_count(combined, ["reproducibility", "reproducible"])),
-        "theorem_count": float(keyword_count(combined, ["theorem", "theorems"])),
-        "lemma_count": float(keyword_count(combined, ["lemma", "lemmas"])),
-        "proof_count": float(keyword_count(combined, ["proof", "proofs"])),
-        "proposition_count": float(keyword_count(combined, ["proposition", "propositions"])),
-        "corollary_count": float(keyword_count(combined, ["corollary", "corollaries"])),
-        "algorithm_count": float(keyword_count(combined, ["algorithm", "algorithms"])),
-        "pseudocode_present": presence(combined, ["pseudocode"]),
-        "complexity_mentions": float(keyword_count(combined, ["complexity", "time complexity"])),
-        "formal_definition_count": float(keyword_count(combined, ["definition", "definitions"])),
-        "formula_density": 0.0,
-        "novelty_keywords_count": float(keyword_count(combined, ["novel", "new", "proposed"])),
-        "research_gap_mentions": float(keyword_count(combined, ["research gap", "gap in the literature"])),
-        "new_method_mentions": float(keyword_count(combined, ["new method", "proposed method", "novel approach"])),
-        "limitation_discussion_presence": presence(combined, ["limitation", "limitations"]),
-        "future_work_mentions": float(keyword_count(combined, ["future work"])),
-        "contribution_mentions": float(keyword_count(combined, ["contribution", "contributions"])),
-        "sample_size_mentions": float(keyword_count(combined, ["sample size"])),
-        "survey_mentions": float(keyword_count(combined, ["survey"])),
-        "interview_mentions": float(keyword_count(combined, ["interview", "interviews"])),
-        "case_study_mentions": float(keyword_count(combined, ["case study", "case studies"])),
-        "fieldwork_mentions": float(keyword_count(combined, ["fieldwork"])),
-        "real_world_mentions": float(keyword_count(combined, ["real world", "real-world"])),
-        "github_link_present": 1.0 if "github.com" in combined.lower() else 0.0,
-        "code_link_present": 1.0 if ("github.com" in combined.lower() or "code available" in combined.lower()) else 0.0,
-        "Institution UKPRN code": 0.0,
-        "Unit of assessment number": 11.0,
-        "Year": 0.0,
-        "Citation count": float(citation_count),
-        "pdf_found": 1.0
-    }
+    num_imputer = bundle.get("num_imputer", None)
+    scaler = bundle.get("scaler", None)
+    classifier = bundle.get("classifier", None)
+    cat_imputer = bundle.get("cat_imputer", None)
+    ohe = bundle.get("ohe", None)
 
-def prepare_input(model_bundle, title, abstract, numeric_inputs, categorical_inputs):
-    embedder = load_embedder(model_bundle.get("embedder_name", "all-MiniLM-L6-v2"))
-    combined_text = f"{title} {abstract}".strip()
-    text_emb = embedder.encode([combined_text], convert_to_numpy=True, normalize_embeddings=True)
+    if classifier is None:
+        raise ValueError("Classifier not found in model bundle.")
 
-    numeric_features = model_bundle.get("numeric_features", [])
-    categorical_features = model_bundle.get("categorical_features", [])
+    # text embeddings
+    embedder = load_embedder(embedder_name)
+    text_values = df_input[text_feature].fillna("").astype(str).tolist()
+    X_text = embedder.encode(text_values, convert_to_numpy=True)
 
+    # numeric features
+    X_num = np.empty((len(df_input), 0))
     if numeric_features:
-        num_row = pd.DataFrame([{f: numeric_inputs.get(f, np.nan) for f in numeric_features}])
-        num_imputer = model_bundle.get("num_imputer")
-        scaler = model_bundle.get("scaler")
-        num_arr = num_imputer.transform(num_row) if num_imputer is not None else num_row.values
-        num_arr = scaler.transform(num_arr) if scaler is not None else num_arr
-    else:
-        num_arr = np.zeros((1, 0))
+        X_num_df = df_input[numeric_features].copy()
+        if num_imputer is not None:
+            X_num_df = pd.DataFrame(
+                num_imputer.transform(X_num_df),
+                columns=numeric_features
+            )
+        if scaler is not None:
+            X_num = scaler.transform(X_num_df)
+        else:
+            X_num = X_num_df.to_numpy(dtype=float)
 
+    # categorical features
+    X_cat = np.empty((len(df_input), 0))
     if categorical_features:
-        cat_row = pd.DataFrame([{f: categorical_inputs.get(f, "") for f in categorical_features}])
-        cat_imputer = model_bundle.get("cat_imputer")
-        ohe = model_bundle.get("ohe")
-        cat_raw = cat_imputer.transform(cat_row) if cat_imputer is not None else cat_row.values
-        cat_arr = ohe.transform(cat_raw) if ohe is not None else np.zeros((1, 0))
+        X_cat_df = df_input[categorical_features].copy()
+
+        if cat_imputer is not None:
+            X_cat_df = pd.DataFrame(
+                cat_imputer.transform(X_cat_df),
+                columns=categorical_features
+            )
+        else:
+            X_cat_df = X_cat_df.fillna("Unknown")
+
+        if ohe is not None:
+            X_cat = ohe.transform(X_cat_df)
+            if hasattr(X_cat, "toarray"):
+                X_cat = X_cat.toarray()
+        else:
+            X_cat = np.empty((len(df_input), 0))
+
+    # combine all
+    X_parts = [arr for arr in [X_text, X_num, X_cat] if arr.shape[1] > 0]
+    X_final = np.hstack(X_parts)
+
+    return X_final, classifier
+
+
+def predict_paper(
+    title: str,
+    abstract_or_text: str,
+    citation_count,
+    publisher: str,
+    institution_name: str,
+    main_panel: str,
+    uoa_name: str,
+    open_access_status: str,
+):
+    bundle = load_model_bundle()
+
+    combined_text = make_combined_text(title, abstract_or_text)
+
+    df_input = prepare_single_input_dataframe(
+        title=title,
+        combined_text=combined_text,
+        citation_count=citation_count,
+        publisher=publisher,
+        institution_name=institution_name,
+        main_panel=main_panel,
+        uoa_name=uoa_name,
+        open_access_status=open_access_status,
+    )
+
+    X_final, classifier = build_feature_matrix(df_input, bundle)
+
+    pred = classifier.predict(X_final)[0]
+
+    if hasattr(classifier, "predict_proba"):
+        prob = classifier.predict_proba(X_final)[0]
+        confidence = float(np.max(prob))
     else:
-        cat_arr = np.zeros((1, 0))
+        confidence = None
 
-    return np.hstack([text_emb, cat_arr, num_arr])
+    return int(pred), confidence, combined_text
 
-# -----------------------------
-# App layout
-# -----------------------------
+
+# =========================================================
+# HEADER
+# =========================================================
 st.markdown('<div class="main-title">Research Paper Quality Prediction System</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">Predict whether an individual paper is likely to be 4★ or not 4★ using textual, structural, and metadata-based features.</div>',
+    '<div class="sub-title">Predict whether an individual paper is likely to be 4★ or not 4★ using textual, structural, and metadata-based inputs.</div>',
     unsafe_allow_html=True
 )
 
-tab1, tab2, tab3 = st.tabs(["Home", "Predict", "About"])
+tab_home, tab_predict, tab_about = st.tabs(["Home", "Predict", "About"])
 
-with tab1:
+
+# =========================================================
+# HOME TAB
+# =========================================================
+with tab_home:
     col1, col2 = st.columns([1.6, 1])
 
     with col1:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("Project Overview")
         st.write(
-            "This web application is part of an MSc project on machine learning-based "
-            "research paper quality prediction. It analyses paper text, PDF-derived features, "
-            "and metadata to estimate the likely paper quality outcome."
+            """
+            This web application is part of an MSc project on machine learning-based research paper
+            quality prediction. It supports binary classification of papers as **4★** or **Not 4★**
+            using paper text and metadata such as citation count, publisher, institution, main panel,
+            unit of assessment, and open access status.
+            """
         )
         st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("How it works")
-        st.write(
-            "1. Upload a research paper PDF\\n"
-            "2. Extract title, abstract, and structural indicators\\n"
-            "3. Add metadata such as citation count and publisher\\n"
-            "4. Run the trained model\\n"
-            "5. View the predicted result and confidence"
+        st.markdown(
+            """
+            1. Enter a paper title and either paste text or upload a PDF  
+            2. Provide metadata used by the model  
+            3. Run prediction  
+            4. View the predicted class and confidence
+            """
         )
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col2:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("Current Model")
-        st.write("Binary classification: **4★ vs Not 4★**")
+        st.write("**Binary classification:** 4★ vs Not 4★")
+        st.write("**Focus:** UOA 11 — Computer Science and Informatics")
+        st.write("**Deployment note:** This is a demonstration system for project presentation and evaluation.")
         st.markdown('</div>', unsafe_allow_html=True)
 
-with tab2:
-    uploaded_pdf = st.file_uploader("Upload research paper PDF", type=["pdf"])
 
-    extracted_text = ""
-    page_count = 0
-    title_default = ""
-    abstract_default = ""
+# =========================================================
+# PREDICT TAB
+# =========================================================
+with tab_predict:
+    st.subheader("Enter Paper Details")
 
-    if uploaded_pdf is not None:
-        extracted_text, page_count = safe_read_pdf(uploaded_pdf)
-        title_default, abstract_default = extract_title_and_abstract(extracted_text)
-        st.success("PDF uploaded and processed successfully.")
+    left_col, right_col = st.columns(2)
 
-    col1, col2 = st.columns(2)
+    with left_col:
+        title = st.text_input("Paper Title", "")
+        uploaded_pdf = st.file_uploader("Upload Paper PDF (optional)", type=["pdf"])
+        manual_text = st.text_area(
+            "Abstract / Extracted Text / Key Paper Content",
+            height=220,
+            placeholder="Paste abstract or important paper text here..."
+        )
 
-    with col1:
-        title = st.text_input("Paper Title", value=title_default)
-        abstract = st.text_area("Abstract / Summary", value=abstract_default, height=220)
+    with right_col:
+        citation_count = st.number_input("Citation Count", min_value=0.0, value=0.0, step=1.0)
+        publisher = st.text_input("Publisher", "Unknown")
+        institution_name = st.text_input("Institution Name", "Unknown")
+        main_panel = st.text_input("Main Panel", "B")
+        uoa_name = st.text_input("Unit of Assessment Name", "Computer Science and Informatics")
 
-    with col2:
-        citation_count = st.number_input("Citation Count", min_value=0, value=0, step=1)
-        publisher = st.text_input("Publisher")
-        institution_name = st.text_input("Institution Name")
-        main_panel = st.text_input("Main Panel", value="B")
-        uoa_name = st.text_input("Unit of Assessment Name", value="Computer Science and Informatics")
         open_access_status = st.selectbox(
             "Open Access Status",
-            ["Unknown", "Open", "Closed", "Hybrid", "Gold", "Green"]
+            [
+                "Compliant",
+                "Out of scope for open access requirements",
+                "Not compliant",
+                "Other exception",
+                "Unknown"
+            ],
+            index=0
         )
 
-    if st.button("Predict", type="primary"):
-        try:
-            model_bundle = load_model_bundle()
+    text_for_prediction = manual_text
 
-            numeric_inputs = build_features(
-                full_text=extracted_text,
-                title=title,
-                abstract=abstract,
-                page_count=page_count,
-                citation_count=citation_count
-            )
+    if uploaded_pdf is not None:
+        with st.spinner("Reading PDF..."):
+            pdf_text = extract_pdf_text(uploaded_pdf)
+        if pdf_text.strip():
+            text_for_prediction = pdf_text
+            st.success("PDF text extracted and will be used for prediction.")
+        else:
+            st.warning("PDF text could not be extracted. The manually entered text will be used instead.")
 
-            categorical_inputs = {
-                "Institution name": institution_name,
-                "Main panel": main_panel,
-                "Unit of assessment name": uoa_name,
-                "Publisher": publisher,
-                "Open access status": open_access_status
-            }
+    predict_button = st.button("Predict")
 
-            X = prepare_input(model_bundle, title, abstract, numeric_inputs, categorical_inputs)
+    if predict_button:
+        if not title.strip():
+            st.error("Please enter the paper title.")
+        elif not text_for_prediction.strip():
+            st.error("Please provide paper text or upload a readable PDF.")
+        else:
+            try:
+                with st.spinner("Running prediction..."):
+                    pred, confidence, combined_text = predict_paper(
+                        title=title,
+                        abstract_or_text=text_for_prediction,
+                        citation_count=citation_count,
+                        publisher=publisher,
+                        institution_name=institution_name,
+                        main_panel=main_panel,
+                        uoa_name=uoa_name,
+                        open_access_status=open_access_status,
+                    )
 
-            clf = model_bundle["classifier"]
-            pred = clf.predict(X)[0]
-            prob = clf.predict_proba(X)[0]
-            classes = list(clf.classes_)
+                st.markdown("---")
+                st.subheader("Prediction Result")
 
-            confidence = float(np.max(prob))
-            pred_label = "4★" if int(pred) == 1 else "Not 4★"
+                if pred == 1:
+                    st.markdown(
+                        '<div class="result-good">Predicted Class: 4★ Paper</div>',
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.markdown(
+                        '<div class="result-warn">Predicted Class: Not 4★ Paper</div>',
+                        unsafe_allow_html=True
+                    )
 
-            st.subheader("Prediction Result")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.metric("Predicted Label", pred_label)
-            with c2:
-                st.metric("Confidence", f"{confidence:.2%}")
+                if confidence is not None:
+                    st.write(f"**Confidence:** {confidence:.2%}")
 
-            prob_df = pd.DataFrame({
-                "Class": ["Not 4★" if int(c) == 0 else "4★" for c in classes],
-                "Probability": prob
-            })
+                with st.expander("Show combined text used for prediction"):
+                    st.write(combined_text[:5000])
 
-            st.subheader("Class Probabilities")
-            st.dataframe(prob_df, use_container_width=True)
-            st.bar_chart(prob_df.set_index("Class"))
+            except Exception as e:
+                st.error(f"Prediction failed: {e}")
 
-        except Exception as e:
-            st.error(f"Prediction failed: {e}")
 
-with tab3:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("About this application")
+# =========================================================
+# ABOUT TAB
+# =========================================================
+with tab_about:
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("About this Project")
     st.write(
-        "This prototype demonstrates deployment of the research model developed in the MSc project. "
-        "It is designed to support paper-level prediction using uploaded PDFs and associated metadata."
+        """
+        This application was developed as part of an MSc project focused on predicting the likely quality
+        category of individual research papers. The project explores how textual, structural, and contextual
+        metadata can be combined within a machine learning pipeline to support research paper evaluation.
+        """
+    )
+    st.write(
+        """
+        The current deployed version uses a binary target:
+        **4★ vs Not 4★**.
+        """
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("Future Extensions")
+    st.markdown(
+        """
+        - richer metadata integration  
+        - paper history storage  
+        - similarity analysis and plagiarism-related checks  
+        - dashboard integration for paper-level analytics
+        """
     )
     st.markdown('</div>', unsafe_allow_html=True)
