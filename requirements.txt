@@ -3,6 +3,6 @@ pandas
 numpy
 scikit-learn==1.6.1
 sentence-transformers
-PyPDF2
+pypdf
 torch
 torchvision
