@@ -1,12 +1,9 @@
 import os
 import re
 import pickle
-from io import BytesIO
-
 import numpy as np
 import pandas as pd
 import streamlit as st
-from pypdf import PdfReader
 
 
 # =========================================================
@@ -86,14 +83,24 @@ def load_embedder(embedder_name: str):
 
 def extract_pdf_text(uploaded_file) -> str:
     try:
+        from io import BytesIO
+        from pypdf import PdfReader
+
         file_bytes = uploaded_file.read()
         reader = PdfReader(BytesIO(file_bytes))
+
         pages = []
         for page in reader.pages:
             txt = page.extract_text()
             if txt:
                 pages.append(txt)
+
         return "\n".join(pages).strip()
+
+    except ModuleNotFoundError:
+        st.error("PDF reading dependency is missing in the deployed app environment.")
+        return ""
+
     except Exception as e:
         st.warning(f"Could not fully read PDF text: {e}")
         return ""
@@ -159,12 +166,10 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
     if classifier is None:
         raise ValueError("Classifier not found in model bundle.")
 
-    # text embeddings
     embedder = load_embedder(embedder_name)
     text_values = df_input[text_feature].fillna("").astype(str).tolist()
     X_text = embedder.encode(text_values, convert_to_numpy=True)
 
-    # numeric features
     X_num = np.empty((len(df_input), 0))
     if numeric_features:
         X_num_df = df_input[numeric_features].copy()
@@ -178,7 +183,6 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
         else:
             X_num = X_num_df.to_numpy(dtype=float)
 
-    # categorical features
     X_cat = np.empty((len(df_input), 0))
     if categorical_features:
         X_cat_df = df_input[categorical_features].copy()
@@ -198,7 +202,6 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
         else:
             X_cat = np.empty((len(df_input), 0))
 
-    # combine all
     X_parts = [arr for arr in [X_text, X_num, X_cat] if arr.shape[1] > 0]
     X_final = np.hstack(X_parts)
 
@@ -278,7 +281,7 @@ with tab_home:
         st.subheader("How it works")
         st.markdown(
             """
-            1. Enter a paper title and either paste text or upload a PDF  
+            1. Upload a paper PDF or paste paper text  
             2. Provide metadata used by the model  
             3. Run prediction  
             4. View the predicted class and confidence
@@ -336,6 +339,7 @@ with tab_predict:
     if uploaded_pdf is not None:
         with st.spinner("Reading PDF..."):
             pdf_text = extract_pdf_text(uploaded_pdf)
+
         if pdf_text.strip():
             text_for_prediction = pdf_text
             st.success("PDF text extracted and will be used for prediction.")
