@@ -1,9 +1,6 @@
 import os
 import re
-import math
 import pickle
-from collections import Counter
-
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -83,7 +80,7 @@ def load_embedder(embedder_name: str):
 
 
 # =========================================================
-# TEXT / PDF HELPERS
+# PDF / TEXT HELPERS
 # =========================================================
 def extract_pdf_text_and_pages(uploaded_file):
     try:
@@ -240,7 +237,6 @@ def binary_present(pattern: str, text: str) -> int:
 
 
 def passive_voice_ratio(text: str) -> float:
-    # Simple heuristic
     matches = re.findall(r"\b(is|are|was|were|been|be|being)\s+\w+ed\b", text.lower())
     sentences = split_sentences(text)
     if not sentences:
@@ -300,6 +296,7 @@ def build_engineered_features(raw_text: str, page_count: int, title: str):
     text = clean_text(raw_text)
     words = tokenize_words(text)
     sentences = split_sentences(text)
+
     word_count = len(words)
     unique_word_count = len(set(words))
     sentence_count = len(sentences)
@@ -311,6 +308,8 @@ def build_engineered_features(raw_text: str, page_count: int, title: str):
     features = {
         "paper_id": "USER_INPUT",
         "Title": title,
+        "Institution UKPRN code": 0,
+        "Year": 0,
         "pdf_found": int(page_count > 0),
         "page_count": page_count,
         "abstract_text": text[:2000],
@@ -332,8 +331,6 @@ def build_engineered_features(raw_text: str, page_count: int, title: str):
         "formula_density": formula_density(text),
         "github_link_present": github_link_present(text),
         "code_link_present": code_link_present(text),
-        "Institution UKPRN code": 0,
-        "Year": 0
     }
 
     for feature_name, pattern in SECTION_PATTERNS.items():
@@ -399,43 +396,34 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
     numeric_features = bundle.get("numeric_features", [])
     categorical_features = bundle.get("categorical_features", [])
 
-    num_imputer = bundle.get("num_imputer", None)
     scaler = bundle.get("scaler", None)
     classifier = bundle.get("classifier", None)
-    cat_imputer = bundle.get("cat_imputer", None)
     ohe = bundle.get("ohe", None)
 
     if classifier is None:
         raise ValueError("Classifier not found in model bundle.")
 
+    # TEXT
     embedder = load_embedder(embedder_name)
     text_values = df_input[text_feature].fillna("").astype(str).tolist()
     X_text = embedder.encode(text_values, convert_to_numpy=True)
 
+    # NUMERIC
     X_num = np.empty((len(df_input), 0))
     if numeric_features:
-        X_num_df = df_input[numeric_features].copy()
-        if num_imputer is not None:
-            X_num_df = pd.DataFrame(
-                num_imputer.transform(X_num_df),
-                columns=numeric_features
-            )
+        X_num_df = df_input.reindex(columns=numeric_features, fill_value=0).copy()
+        X_num_df = X_num_df.apply(pd.to_numeric, errors="coerce").fillna(0.0)
+
         if scaler is not None:
             X_num = scaler.transform(X_num_df)
         else:
             X_num = X_num_df.to_numpy(dtype=float)
 
+    # CATEGORICAL
     X_cat = np.empty((len(df_input), 0))
     if categorical_features:
-        X_cat_df = df_input[categorical_features].copy()
-
-        if cat_imputer is not None:
-            X_cat_df = pd.DataFrame(
-                cat_imputer.transform(X_cat_df),
-                columns=categorical_features
-            )
-        else:
-            X_cat_df = X_cat_df.fillna("Unknown")
+        X_cat_df = df_input.reindex(columns=categorical_features, fill_value="Unknown").copy()
+        X_cat_df = X_cat_df.fillna("Unknown").astype(str)
 
         if ohe is not None:
             X_cat = ohe.transform(X_cat_df)
@@ -462,7 +450,6 @@ def predict_paper(
     engineered_features: dict,
 ):
     bundle = load_model_bundle()
-
     combined_text = make_combined_text(title, abstract_or_text)
 
     df_input = prepare_single_input_dataframe(
@@ -479,20 +466,18 @@ def predict_paper(
     )
 
     X_final, classifier = build_feature_matrix(df_input, bundle)
-
     pred = classifier.predict(X_final)[0]
 
+    confidence = None
     if hasattr(classifier, "predict_proba"):
         prob = classifier.predict_proba(X_final)[0]
         confidence = float(np.max(prob))
-    else:
-        confidence = None
 
     return int(pred), confidence, combined_text, df_input
 
 
 # =========================================================
-# HEADER
+# UI HEADER
 # =========================================================
 st.markdown('<div class="main-title">Research Paper Quality Prediction System</div>', unsafe_allow_html=True)
 st.markdown(
@@ -527,7 +512,7 @@ with tab_home:
         st.markdown(
             """
             1. Upload a paper PDF or paste paper text  
-            2. The system extracts text and derives structural/content features  
+            2. The system extracts text and derives document-level features  
             3. Metadata is combined with these extracted features  
             4. The trained model predicts whether the paper is likely 4★ or not 4★
             """
