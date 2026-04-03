@@ -1,11 +1,8 @@
 streamlit
 pandas
 numpy
-scikit-learn
-joblib
+scikit-learn==1.6.1
 sentence-transformers
+pypdf
 torch
 torchvision
-pypdf
-PyPDF2
-pdfplumber
