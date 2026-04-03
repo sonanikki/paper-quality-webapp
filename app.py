@@ -1,6 +1,9 @@
 import os
 import re
+import math
 import pickle
+from collections import Counter
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -63,16 +66,14 @@ st.markdown("""
 
 
 # =========================================================
-# HELPERS
+# RESOURCES
 # =========================================================
 @st.cache_resource
 def load_model_bundle():
     if not os.path.exists(MODEL_PATH):
         raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
-
     with open(MODEL_PATH, "rb") as f:
-        bundle = pickle.load(f)
-    return bundle
+        return pickle.load(f)
 
 
 @st.cache_resource
@@ -81,13 +82,17 @@ def load_embedder(embedder_name: str):
     return SentenceTransformer(embedder_name)
 
 
-def extract_pdf_text(uploaded_file) -> str:
+# =========================================================
+# TEXT / PDF HELPERS
+# =========================================================
+def extract_pdf_text_and_pages(uploaded_file):
     try:
         from io import BytesIO
         from pypdf import PdfReader
 
         file_bytes = uploaded_file.read()
         reader = PdfReader(BytesIO(file_bytes))
+        page_count = len(reader.pages)
 
         pages = []
         for page in reader.pages:
@@ -95,15 +100,22 @@ def extract_pdf_text(uploaded_file) -> str:
             if txt:
                 pages.append(txt)
 
-        return "\n".join(pages).strip()
+        return "\n".join(pages).strip(), page_count
 
     except ModuleNotFoundError:
-        st.error("PDF reading dependency is missing in the deployed app environment.")
-        return ""
+        st.error("PDF reading dependency is missing in the deployed environment.")
+        return "", 0
 
     except Exception as e:
         st.warning(f"Could not fully read PDF text: {e}")
+        return "", 0
+
+
+def clean_text(text: str) -> str:
+    if not text:
         return ""
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 def safe_float(value, default=0.0):
@@ -115,11 +127,224 @@ def safe_float(value, default=0.0):
         return default
 
 
-def clean_text(text: str) -> str:
+def tokenize_words(text: str):
+    return re.findall(r"\b[a-zA-Z]+\b", text.lower())
+
+
+def split_sentences(text: str):
+    sentences = re.split(r"[.!?]+", text)
+    return [s.strip() for s in sentences if s.strip()]
+
+
+STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "if", "while", "of", "to", "in", "on",
+    "for", "with", "at", "by", "from", "up", "about", "into", "over", "after",
+    "is", "are", "was", "were", "be", "been", "being", "this", "that", "these",
+    "those", "as", "it", "its", "their", "our", "we", "they", "he", "she", "you",
+    "i", "his", "her", "them", "than", "then", "which", "who", "whom", "what",
+    "when", "where", "why", "how", "can", "could", "should", "would", "may",
+    "might", "will", "shall", "do", "does", "did", "done", "have", "has", "had"
+}
+
+ACADEMIC_WORDS = {
+    "analysis", "approach", "assessment", "concept", "data", "design", "development",
+    "evaluation", "evidence", "experiment", "framework", "hypothesis", "implementation",
+    "investigation", "method", "methodology", "model", "objective", "outcome",
+    "performance", "process", "research", "result", "study", "system", "theory",
+    "validation", "significance", "rigour", "contribution"
+}
+
+SECTION_PATTERNS = {
+    "abstract_present": r"\babstract\b",
+    "introduction_present": r"\bintroduction\b",
+    "literature_review_present": r"(literature review|related work|background)",
+    "methodology_present": r"(methodology|methods|materials and methods|approach)",
+    "results_present": r"\bresults?\b",
+    "discussion_present": r"\bdiscussion\b",
+    "conclusion_present": r"(conclusion|conclusions|concluding remarks)",
+    "references_present": r"(references|bibliography)"
+}
+
+COUNT_PATTERNS = {
+    "experiment_mentions": r"\bexperiment(s)?\b",
+    "dataset_mentions": r"\bdataset(s)?\b",
+    "evaluation_mentions": r"\bevaluation\b",
+    "validation_mentions": r"\bvalidation\b",
+    "benchmark_mentions": r"\bbenchmark(s)?\b",
+    "statistical_terms_count": r"\b(statistical|regression|anova|variance|significant)\b",
+    "p_value_mentions": r"\bp\s*[<=>]\s*0\.\d+|\bp-value\b",
+    "confidence_interval_mentions": r"\bconfidence interval(s)?\b|\bCI\b",
+    "ablation_mentions": r"\bablation\b",
+    "baseline_mentions": r"\bbaseline(s)?\b",
+    "reproducibility_terms_count": r"\b(reproducibility|reproducible|replication|replicable)\b",
+    "theorem_count": r"\btheorem(s)?\b",
+    "lemma_count": r"\blemma(s)?\b",
+    "proof_count": r"\bproof(s)?\b",
+    "proposition_count": r"\bproposition(s)?\b",
+    "corollary_count": r"\bcorollary\b",
+    "algorithm_count": r"\balgorithm(s)?\b",
+    "complexity_mentions": r"\bcomplexity\b|\bo\([n0-9log\+\-\*\/\^\s]+\)",
+    "formal_definition_count": r"\bdefinition(s)?\b",
+    "novelty_keywords_count": r"\bnovel|new|original|innovative|proposed\b",
+    "research_gap_mentions": r"\b(gap in the literature|research gap|existing gap)\b",
+    "new_method_mentions": r"\bproposed method|new method|novel method\b",
+    "future_work_mentions": r"\bfuture work\b",
+    "contribution_mentions": r"\bcontribution(s)?\b",
+    "sample_size_mentions": r"\bsample size\b|\bn\s*=\s*\d+\b",
+    "survey_mentions": r"\bsurvey(s)?\b",
+    "interview_mentions": r"\binterview(s)?\b",
+    "case_study_mentions": r"\bcase study|case studies\b",
+    "fieldwork_mentions": r"\bfieldwork\b",
+    "real_world_mentions": r"\breal[- ]world\b"
+}
+
+
+def count_matches(pattern: str, text: str) -> int:
+    return len(re.findall(pattern, text, flags=re.IGNORECASE))
+
+
+def syllable_count(word: str) -> int:
+    word = word.lower()
+    vowels = "aeiouy"
+    count = 0
+    prev_vowel = False
+    for char in word:
+        is_vowel = char in vowels
+        if is_vowel and not prev_vowel:
+            count += 1
+        prev_vowel = is_vowel
+    if word.endswith("e") and count > 1:
+        count -= 1
+    return max(count, 1)
+
+
+def flesch_reading_ease(text: str) -> float:
+    words = tokenize_words(text)
+    sentences = split_sentences(text)
+    if not words or not sentences:
+        return 0.0
+    syllables = sum(syllable_count(w) for w in words)
+    return 206.835 - 1.015 * (len(words) / len(sentences)) - 84.6 * (syllables / len(words))
+
+
+def detect_section_count(text: str) -> int:
+    count = 0
+    for _, pattern in SECTION_PATTERNS.items():
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            count += 1
+    return count
+
+
+def binary_present(pattern: str, text: str) -> int:
+    return int(bool(re.search(pattern, text, flags=re.IGNORECASE)))
+
+
+def passive_voice_ratio(text: str) -> float:
+    # Simple heuristic
+    matches = re.findall(r"\b(is|are|was|were|been|be|being)\s+\w+ed\b", text.lower())
+    sentences = split_sentences(text)
+    if not sentences:
+        return 0.0
+    return len(matches) / len(sentences)
+
+
+def punctuation_density(text: str) -> float:
     if not text:
-        return ""
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+        return 0.0
+    punct = len(re.findall(r"[,\.;:!?()\[\]{}\-]", text))
+    return punct / max(len(text), 1)
+
+
+def github_link_present(text: str) -> int:
+    return int(bool(re.search(r"github\.com", text, flags=re.IGNORECASE)))
+
+
+def code_link_present(text: str) -> int:
+    return int(bool(re.search(r"(github\.com|gitlab\.com|bitbucket\.org|code available|source code)", text, flags=re.IGNORECASE)))
+
+
+def pseudocode_present(text: str) -> int:
+    return int(bool(re.search(r"\bpseudocode\b", text, flags=re.IGNORECASE)))
+
+
+def formula_density(text: str) -> float:
+    formulas = len(re.findall(r"[=+\-/*^<>≤≥∑∫λμσπ]", text))
+    words = len(tokenize_words(text))
+    return formulas / max(words, 1)
+
+
+def academic_word_frequency(text: str) -> float:
+    words = tokenize_words(text)
+    if not words:
+        return 0.0
+    academic = sum(1 for w in words if w in ACADEMIC_WORDS)
+    return academic / len(words)
+
+
+def lexical_density(text: str) -> float:
+    words = tokenize_words(text)
+    if not words:
+        return 0.0
+    content_words = [w for w in words if w not in STOPWORDS]
+    return len(content_words) / len(words)
+
+
+def vocabulary_richness(text: str) -> float:
+    words = tokenize_words(text)
+    if not words:
+        return 0.0
+    return len(set(words)) / len(words)
+
+
+def build_engineered_features(raw_text: str, page_count: int, title: str):
+    text = clean_text(raw_text)
+    words = tokenize_words(text)
+    sentences = split_sentences(text)
+    word_count = len(words)
+    unique_word_count = len(set(words))
+    sentence_count = len(sentences)
+
+    avg_sentence_length = word_count / sentence_count if sentence_count else 0.0
+    max_sentence_length = max((len(tokenize_words(s)) for s in sentences), default=0)
+    avg_word_length = np.mean([len(w) for w in words]) if words else 0.0
+
+    features = {
+        "paper_id": "USER_INPUT",
+        "Title": title,
+        "pdf_found": int(page_count > 0),
+        "page_count": page_count,
+        "abstract_text": text[:2000],
+        "abstract_present": binary_present(r"\babstract\b", text),
+        "word_count": word_count,
+        "unique_word_count": unique_word_count,
+        "vocabulary_richness": vocabulary_richness(text),
+        "avg_word_length": avg_word_length,
+        "lexical_density": lexical_density(text),
+        "academic_word_frequency": academic_word_frequency(text),
+        "sentence_count": sentence_count,
+        "avg_sentence_length": avg_sentence_length,
+        "max_sentence_length": max_sentence_length,
+        "readability_score": flesch_reading_ease(text),
+        "passive_voice_ratio": passive_voice_ratio(text),
+        "punctuation_density": punctuation_density(text),
+        "section_count": detect_section_count(text),
+        "pseudocode_present": pseudocode_present(text),
+        "formula_density": formula_density(text),
+        "github_link_present": github_link_present(text),
+        "code_link_present": code_link_present(text),
+        "Institution UKPRN code": 0,
+        "Year": 0
+    }
+
+    for feature_name, pattern in SECTION_PATTERNS.items():
+        features[feature_name] = binary_present(pattern, text)
+
+    for feature_name, pattern in COUNT_PATTERNS.items():
+        features[feature_name] = count_matches(pattern, text)
+
+    features["limitation_discussion_presence"] = binary_present(r"\blimitation(s)?\b", text)
+
+    return features
 
 
 def make_combined_text(title: str, abstract_or_text: str) -> str:
@@ -137,17 +362,34 @@ def prepare_single_input_dataframe(
     main_panel: str,
     uoa_name: str,
     open_access_status: str,
+    engineered_features: dict,
+    bundle: dict,
 ):
-    row = {
-        "Title": title,
-        "combined_text": combined_text,
-        "Citation count": safe_float(citation_count, 0),
-        "Publisher": publisher,
-        "Institution name": institution_name,
-        "Main panel": main_panel,
-        "Unit of assessment name": uoa_name,
-        "Open access status": open_access_status,
-    }
+    row = dict(engineered_features)
+
+    row["Title"] = title
+    row["combined_text"] = combined_text
+    row["Citation count"] = safe_float(citation_count, 0)
+    row["Publisher"] = publisher
+    row["Institution name"] = institution_name
+    row["Main panel"] = main_panel
+    row["Unit of assessment name"] = uoa_name
+    row["Open access status"] = open_access_status
+
+    numeric_features = bundle.get("numeric_features", [])
+    categorical_features = bundle.get("categorical_features", [])
+
+    for col in numeric_features:
+        if col not in row:
+            row[col] = 0.0
+
+    for col in categorical_features:
+        if col not in row:
+            row[col] = "Unknown"
+
+    if "combined_text" not in row:
+        row["combined_text"] = combined_text
+
     return pd.DataFrame([row])
 
 
@@ -217,6 +459,7 @@ def predict_paper(
     main_panel: str,
     uoa_name: str,
     open_access_status: str,
+    engineered_features: dict,
 ):
     bundle = load_model_bundle()
 
@@ -231,6 +474,8 @@ def predict_paper(
         main_panel=main_panel,
         uoa_name=uoa_name,
         open_access_status=open_access_status,
+        engineered_features=engineered_features,
+        bundle=bundle,
     )
 
     X_final, classifier = build_feature_matrix(df_input, bundle)
@@ -243,7 +488,7 @@ def predict_paper(
     else:
         confidence = None
 
-    return int(pred), confidence, combined_text
+    return int(pred), confidence, combined_text, df_input
 
 
 # =========================================================
@@ -271,8 +516,8 @@ with tab_home:
             """
             This web application is part of an MSc project on machine learning-based research paper
             quality prediction. It supports binary classification of papers as **4★** or **Not 4★**
-            using paper text and metadata such as citation count, publisher, institution, main panel,
-            unit of assessment, and open access status.
+            using paper text, structural indicators, and metadata such as citation count, publisher,
+            institution, main panel, unit of assessment, and open access status.
             """
         )
         st.markdown('</div>', unsafe_allow_html=True)
@@ -282,9 +527,9 @@ with tab_home:
         st.markdown(
             """
             1. Upload a paper PDF or paste paper text  
-            2. Provide metadata used by the model  
-            3. Run prediction  
-            4. View the predicted class and confidence
+            2. The system extracts text and derives structural/content features  
+            3. Metadata is combined with these extracted features  
+            4. The trained model predicts whether the paper is likely 4★ or not 4★
             """
         )
         st.markdown('</div>', unsafe_allow_html=True)
@@ -294,7 +539,7 @@ with tab_home:
         st.subheader("Current Model")
         st.write("**Binary classification:** 4★ vs Not 4★")
         st.write("**Focus:** UOA 11 — Computer Science and Informatics")
-        st.write("**Deployment note:** This is a demonstration system for project presentation and evaluation.")
+        st.write("**Inference mode:** PDF/text + metadata + engineered document features")
         st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -335,10 +580,11 @@ with tab_predict:
         )
 
     text_for_prediction = manual_text
+    detected_page_count = 0
 
     if uploaded_pdf is not None:
         with st.spinner("Reading PDF..."):
-            pdf_text = extract_pdf_text(uploaded_pdf)
+            pdf_text, detected_page_count = extract_pdf_text_and_pages(uploaded_pdf)
 
         if pdf_text.strip():
             text_for_prediction = pdf_text
@@ -355,8 +601,14 @@ with tab_predict:
             st.error("Please provide paper text or upload a readable PDF.")
         else:
             try:
+                engineered_features = build_engineered_features(
+                    raw_text=text_for_prediction,
+                    page_count=detected_page_count,
+                    title=title
+                )
+
                 with st.spinner("Running prediction..."):
-                    pred, confidence, combined_text = predict_paper(
+                    pred, confidence, combined_text, debug_df = predict_paper(
                         title=title,
                         abstract_or_text=text_for_prediction,
                         citation_count=citation_count,
@@ -365,6 +617,7 @@ with tab_predict:
                         main_panel=main_panel,
                         uoa_name=uoa_name,
                         open_access_status=open_access_status,
+                        engineered_features=engineered_features,
                     )
 
                 st.markdown("---")
@@ -387,6 +640,9 @@ with tab_predict:
                 with st.expander("Show combined text used for prediction"):
                     st.write(combined_text[:5000])
 
+                with st.expander("Show engineered features used for inference"):
+                    st.dataframe(debug_df.T)
+
             except Exception as e:
                 st.error(f"Prediction failed: {e}")
 
@@ -400,16 +656,11 @@ with tab_about:
     st.write(
         """
         This application was developed as part of an MSc project focused on predicting the likely quality
-        category of individual research papers. The project explores how textual, structural, and contextual
-        metadata can be combined within a machine learning pipeline to support research paper evaluation.
+        category of individual research papers. The project combines metadata, textual content, and
+        engineered document features within a machine learning pipeline to support paper-level evaluation.
         """
     )
-    st.write(
-        """
-        The current deployed version uses a binary target:
-        **4★ vs Not 4★**.
-        """
-    )
+    st.write("**Current target:** 4★ vs Not 4★")
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
@@ -417,7 +668,7 @@ with tab_about:
     st.markdown(
         """
         - richer metadata integration  
-        - paper history storage  
+        - persistent submission storage  
         - similarity analysis and plagiarism-related checks  
         - dashboard integration for paper-level analytics
         """
