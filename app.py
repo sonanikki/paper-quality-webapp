@@ -501,11 +501,17 @@ def predict_paper(
     pred = classifier.predict(X_final)[0]
 
     confidence = None
-    if hasattr(classifier, "predict_proba"):
-        prob = classifier.predict_proba(X_final)[0]
-        confidence = float(np.max(prob))
+    probabilities = None
+    classifier_classes = None
 
-    return int(pred), confidence, combined_text, df_input
+    if hasattr(classifier, "classes_"):
+        classifier_classes = classifier.classes_
+
+    if hasattr(classifier, "predict_proba"):
+        probabilities = classifier.predict_proba(X_final)[0]
+        confidence = float(np.max(probabilities))
+
+    return int(pred), confidence, combined_text, df_input, classifier_classes, probabilities
 
 
 # =========================================================
@@ -628,7 +634,7 @@ with tab_predict:
                 )
 
                 with st.spinner("Running prediction..."):
-                    pred, confidence, combined_text, debug_df = predict_paper(
+                    pred, confidence, combined_text, debug_df, classifier_classes, probabilities = predict_paper(
                         title=title,
                         abstract_or_text=text_for_prediction,
                         citation_count=citation_count,
@@ -643,6 +649,7 @@ with tab_predict:
                 st.markdown("---")
                 st.subheader("Prediction Result")
 
+                # Temporary current mapping
                 if pred == 1:
                     st.markdown(
                         '<div class="result-good">Predicted Class: 4★ Paper</div>',
@@ -656,6 +663,11 @@ with tab_predict:
 
                 if confidence is not None:
                     st.write(f"**Confidence:** {confidence:.2%}")
+
+                with st.expander("Show prediction debug info"):
+                    st.write("Raw prediction:", pred)
+                    st.write("Classifier classes:", classifier_classes)
+                    st.write("Prediction probabilities:", probabilities)
 
                 with st.expander("Show combined text used for prediction"):
                     st.write(combined_text[:5000])
