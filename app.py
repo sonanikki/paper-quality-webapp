@@ -7,9 +7,6 @@ import pandas as pd
 import streamlit as st
 
 
-# =========================================================
-# PAGE CONFIG
-# =========================================================
 st.set_page_config(
     page_title="Research Paper Quality Prediction System",
     page_icon="📄",
@@ -19,9 +16,6 @@ st.set_page_config(
 MODEL_PATH = "binary_hybrid_logistic.pkl"
 
 
-# =========================================================
-# STYLING
-# =========================================================
 st.markdown("""
 <style>
     .main-title {
@@ -63,21 +57,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# =========================================================
-# DIAGNOSTICS
-# =========================================================
 def check_runtime_dependencies():
     results = {}
-    package_names = ["sklearn", "pypdf", "sentence_transformers", "torch", "pickle"]
+    package_names = ["sklearn", "pypdf", "sentence_transformers", "torch"]
 
     for pkg in package_names:
         try:
-            if pkg == "pickle":
-                import pickle as mod
-                version = "builtin"
-            else:
-                mod = importlib.import_module(pkg)
-                version = getattr(mod, "__version__", "version unknown")
+            mod = importlib.import_module(pkg)
+            version = getattr(mod, "__version__", "version unknown")
             results[pkg] = f"OK ({version})"
         except Exception as e:
             results[pkg] = f"ERROR: {e}"
@@ -85,9 +72,6 @@ def check_runtime_dependencies():
     return results
 
 
-# =========================================================
-# RESOURCES
-# =========================================================
 @st.cache_resource
 def load_model_bundle():
     if not os.path.exists(MODEL_PATH):
@@ -107,9 +91,6 @@ def load_embedder(embedder_name: str):
     return SentenceTransformer(embedder_name)
 
 
-# =========================================================
-# PDF / TEXT HELPERS
-# =========================================================
 def extract_pdf_text_and_pages(uploaded_file):
     try:
         from io import BytesIO
@@ -143,11 +124,6 @@ def clean_text(text: str) -> str:
 
 
 def extract_title_and_abstract(text: str):
-    """
-    Match the notebook/web-app idea more closely:
-    use title-like first line + abstract-style extracted text,
-    not the whole PDF as combined_text.
-    """
     if not text or not text.strip():
         return "", ""
 
@@ -351,11 +327,6 @@ def vocabulary_richness(text: str) -> float:
 
 
 def build_engineered_features(raw_text: str, page_count: int, title: str):
-    """
-    Build numeric features.
-    Missing features will still be filled later from the model bundle,
-    but this gives the model realistic values instead of only defaults.
-    """
     text = clean_text(raw_text)
     words = tokenize_words(text)
     sentences = split_sentences(text)
@@ -466,7 +437,6 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
     if classifier is None:
         raise ValueError("Classifier not found in model bundle.")
 
-    # TEXT: match notebook cell 103
     embedder = load_embedder(embedder_name)
     text_values = df_input[text_feature].fillna("").astype(str).tolist()
     X_text = embedder.encode(
@@ -475,7 +445,6 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
         normalize_embeddings=True
     )
 
-    # CATEGORICAL: match notebook
     X_cat = np.empty((len(df_input), 0))
     if categorical_features:
         X_cat_df = df_input.reindex(columns=categorical_features, fill_value="Unknown").copy()
@@ -490,10 +459,7 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
             X_cat = ohe.transform(X_cat_raw)
             if hasattr(X_cat, "toarray"):
                 X_cat = X_cat.toarray()
-        else:
-            X_cat = np.empty((len(df_input), 0))
 
-    # NUMERIC: match notebook
     X_num = np.empty((len(df_input), 0))
     if numeric_features:
         X_num_df = df_input.reindex(columns=numeric_features, fill_value=0).copy()
@@ -587,9 +553,6 @@ def predict_paper(
     return pred, confidence, df_input, classifier_classes, probabilities, debug_info, decision_score
 
 
-# =========================================================
-# UI HEADER
-# =========================================================
 st.markdown(
     '<div class="main-title">Research Paper Quality Prediction System</div>',
     unsafe_allow_html=True
@@ -601,10 +564,6 @@ st.markdown(
 
 tab_home, tab_predict, tab_about = st.tabs(["Home", "Predict", "About"])
 
-
-# =========================================================
-# HOME TAB
-# =========================================================
 with tab_home:
     col1, col2 = st.columns([1.6, 1])
 
@@ -621,30 +580,13 @@ with tab_home:
         )
         st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.subheader("How it works")
-        st.markdown(
-            """
-            1. Upload a paper PDF or paste abstract/text  
-            2. The system extracts abstract-like content and document-level features  
-            3. Metadata is combined with these extracted features  
-            4. The trained binary hybrid model predicts whether the paper is likely 4★ or not 4★
-            """
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
-
     with col2:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("Current Model")
         st.write("**Binary classification:** 4★ vs Not 4★")
-        st.write("**Focus:** UOA 11 — Computer Science and Informatics")
         st.write("**Target mapping:** 1 = 4★, 0 = Not 4★")
         st.markdown('</div>', unsafe_allow_html=True)
 
-
-# =========================================================
-# PREDICT TAB
-# =========================================================
 with tab_predict:
     st.subheader("Enter Paper Details")
 
@@ -704,9 +646,7 @@ with tab_predict:
         else:
             st.warning("PDF text could not be extracted. The manually entered text will be used instead.")
 
-    predict_button = st.button("Predict")
-
-    if predict_button:
+    if st.button("Predict"):
         if not final_title.strip():
             st.error("Please enter the paper title, or upload a PDF with a readable first line/title.")
         elif not abstract_for_model.strip():
@@ -735,8 +675,6 @@ with tab_predict:
                 st.markdown("---")
                 st.subheader("Prediction Result")
 
-                # Confirmed from notebook cell 103:
-                # is_4_star = (label == 4).astype(int)
                 if int(pred) == 1:
                     st.markdown(
                         '<div class="result-good">Predicted Class: 4★ Paper</div>',
@@ -758,7 +696,7 @@ with tab_predict:
                     st.write("Decision score:", decision_score)
                     st.json(feature_debug)
 
-                with st.expander("Show text used for model (abstract-style)"):
+                with st.expander("Show text used for model"):
                     st.write(abstract_for_model[:5000])
 
                 with st.expander("Show input row used for inference"):
@@ -767,34 +705,6 @@ with tab_predict:
             except Exception as e:
                 st.error(f"Prediction failed: {e}")
 
-
-# =========================================================
-# ABOUT TAB
-# =========================================================
 with tab_about:
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("About this Project")
-    st.write(
-        """
-        This application was developed as part of an MSc project focused on predicting the likely quality
-        category of individual research papers. The project combines metadata, textual content, and
-        engineered document features within a machine learning pipeline to support paper-level evaluation.
-        """
-    )
-    st.write("**Current target:** 4★ vs Not 4★")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Future Extensions")
-    st.markdown(
-        """
-        - richer metadata integration  
-        - persistent submission storage  
-        - similarity analysis and plagiarism-related checks  
-        - dashboard integration for paper-level analytics
-        """
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
-
     with st.expander("Runtime dependency check"):
         st.json(check_runtime_dependencies())
