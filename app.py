@@ -1,6 +1,6 @@
 import os
 import re
-import pickle
+import joblib
 import importlib
 import numpy as np
 import pandas as pd
@@ -68,7 +68,7 @@ st.markdown("""
 # =========================================================
 def check_runtime_dependencies():
     results = {}
-    package_names = ["sklearn", "pypdf", "sentence_transformers", "torch"]
+    package_names = ["sklearn", "pypdf", "sentence_transformers", "torch", "joblib"]
 
     for pkg in package_names:
         try:
@@ -90,8 +90,7 @@ def load_model_bundle():
         raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
 
     try:
-        with open(MODEL_PATH, "rb") as f:
-            bundle = pickle.load(f)
+        bundle = joblib.load(MODEL_PATH)
         return bundle
     except Exception as e:
         raise RuntimeError(f"Failed to load model bundle: {e}")
@@ -123,8 +122,8 @@ def extract_pdf_text_and_pages(uploaded_file):
 
         return "\n".join(pages).strip(), page_count
 
-    except ModuleNotFoundError:
-        st.error("PDF reading dependency is missing in the deployed environment.")
+    except ModuleNotFoundError as e:
+        st.error(f"PDF reading dependency is missing in the deployed environment: {e}")
         return "", 0
 
     except Exception as e:
@@ -135,8 +134,7 @@ def extract_pdf_text_and_pages(uploaded_file):
 def clean_text(text: str) -> str:
     if not text:
         return ""
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def safe_float(value, default=0.0):
@@ -229,28 +227,33 @@ def syllable_count(word: str) -> int:
     vowels = "aeiouy"
     count = 0
     prev_vowel = False
+
     for char in word:
         is_vowel = char in vowels
         if is_vowel and not prev_vowel:
             count += 1
         prev_vowel = is_vowel
+
     if word.endswith("e") and count > 1:
         count -= 1
+
     return max(count, 1)
 
 
 def flesch_reading_ease(text: str) -> float:
     words = tokenize_words(text)
     sentences = split_sentences(text)
+
     if not words or not sentences:
         return 0.0
+
     syllables = sum(syllable_count(w) for w in words)
     return 206.835 - 1.015 * (len(words) / len(sentences)) - 84.6 * (syllables / len(words))
 
 
 def detect_section_count(text: str) -> int:
     count = 0
-    for _, pattern in SECTION_PATTERNS.items():
+    for pattern in SECTION_PATTERNS.values():
         if re.search(pattern, text, flags=re.IGNORECASE):
             count += 1
     return count
@@ -327,7 +330,7 @@ def build_engineered_features(raw_text: str, page_count: int, title: str):
 
     avg_sentence_length = word_count / sentence_count if sentence_count else 0.0
     max_sentence_length = max((len(tokenize_words(s)) for s in sentences), default=0)
-    avg_word_length = np.mean([len(w) for w in words]) if words else 0.0
+    avg_word_length = float(np.mean([len(w) for w in words])) if words else 0.0
 
     features = {
         "paper_id": "USER_INPUT",
@@ -508,7 +511,10 @@ def predict_paper(
 # =========================================================
 # UI HEADER
 # =========================================================
-st.markdown('<div class="main-title">Research Paper Quality Prediction System</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="main-title">Research Paper Quality Prediction System</div>',
+    unsafe_allow_html=True
+)
 st.markdown(
     '<div class="sub-title">Predict whether an individual paper is likely to be 4★ or not 4★ using textual, structural, and metadata-based inputs.</div>',
     unsafe_allow_html=True
