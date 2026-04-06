@@ -1,6 +1,7 @@
 import os
 import re
 import pickle
+import importlib
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -63,14 +64,37 @@ st.markdown("""
 
 
 # =========================================================
+# DIAGNOSTICS
+# =========================================================
+def check_runtime_dependencies():
+    results = {}
+    package_names = ["sklearn", "pypdf", "sentence_transformers", "torch"]
+
+    for pkg in package_names:
+        try:
+            mod = importlib.import_module(pkg)
+            version = getattr(mod, "__version__", "version unknown")
+            results[pkg] = f"OK ({version})"
+        except Exception as e:
+            results[pkg] = f"ERROR: {e}"
+
+    return results
+
+
+# =========================================================
 # RESOURCES
 # =========================================================
 @st.cache_resource
 def load_model_bundle():
     if not os.path.exists(MODEL_PATH):
         raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
-    with open(MODEL_PATH, "rb") as f:
-        return pickle.load(f)
+
+    try:
+        with open(MODEL_PATH, "rb") as f:
+            bundle = pickle.load(f)
+        return bundle
+    except Exception as e:
+        raise RuntimeError(f"Failed to load model bundle: {e}")
 
 
 @st.cache_resource
@@ -403,12 +427,10 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
     if classifier is None:
         raise ValueError("Classifier not found in model bundle.")
 
-    # TEXT
     embedder = load_embedder(embedder_name)
     text_values = df_input[text_feature].fillna("").astype(str).tolist()
     X_text = embedder.encode(text_values, convert_to_numpy=True)
 
-    # NUMERIC
     X_num = np.empty((len(df_input), 0))
     if numeric_features:
         X_num_df = df_input.reindex(columns=numeric_features, fill_value=0).copy()
@@ -419,7 +441,6 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
         else:
             X_num = X_num_df.to_numpy(dtype=float)
 
-    # CATEGORICAL
     X_cat = np.empty((len(df_input), 0))
     if categorical_features:
         X_cat_df = df_input.reindex(columns=categorical_features, fill_value="Unknown").copy()
@@ -433,8 +454,10 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
             X_cat = np.empty((len(df_input), 0))
 
     X_parts = [arr for arr in [X_text, X_num, X_cat] if arr.shape[1] > 0]
-    X_final = np.hstack(X_parts)
+    if not X_parts:
+        raise ValueError("No features were generated for prediction.")
 
+    X_final = np.hstack(X_parts)
     return X_final, classifier
 
 
@@ -450,6 +473,12 @@ def predict_paper(
     engineered_features: dict,
 ):
     bundle = load_model_bundle()
+
+    required_keys = ["classifier", "numeric_features", "categorical_features"]
+    missing_keys = [k for k in required_keys if k not in bundle]
+    if missing_keys:
+        raise ValueError(f"Model bundle is missing required keys: {missing_keys}")
+
     combined_text = make_combined_text(title, abstract_or_text)
 
     df_input = prepare_single_input_dataframe(
@@ -659,3 +688,6 @@ with tab_about:
         """
     )
     st.markdown('</div>', unsafe_allow_html=True)
+
+    with st.expander("Runtime dependency check"):
+        st.json(check_runtime_dependencies())
