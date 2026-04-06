@@ -2,6 +2,9 @@ import os
 import re
 import pickle
 import importlib
+from io import BytesIO
+from datetime import datetime
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -13,7 +16,8 @@ import streamlit as st
 st.set_page_config(
     page_title="Research Paper Quality Prediction System",
     page_icon="📄",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 MODEL_PATH = "binary_hybrid_logistic.pkl"
@@ -25,40 +29,209 @@ LOOKUP_PATH = "metadata_lookup.csv"
 # =========================================================
 st.markdown("""
 <style>
-    .main-title {
-        font-size: 2.4rem;
-        font-weight: 700;
+    .stApp {
+        background: linear-gradient(180deg, #f5f7fb 0%, #eef3f9 45%, #f8fbff 100%);
+    }
+
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+        max-width: 1400px;
+    }
+
+    .hero-box {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 45%, #334155 100%);
+        color: white;
+        padding: 2rem 2rem 1.6rem 2rem;
+        border-radius: 24px;
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+        margin-bottom: 1.2rem;
+        animation: fadeUp 0.7s ease;
+    }
+
+    .hero-title {
+        font-size: 2.3rem;
+        font-weight: 800;
+        line-height: 1.15;
+        margin-bottom: 0.35rem;
+    }
+
+    .hero-subtitle {
+        font-size: 1.03rem;
+        line-height: 1.65;
+        opacity: 0.95;
+        max-width: 980px;
+    }
+
+    .section-card {
+        background: rgba(255, 255, 255, 0.92);
+        backdrop-filter: blur(6px);
+        padding: 1.15rem 1.25rem;
+        border-radius: 20px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07);
+        margin-bottom: 1rem;
+        animation: fadeUp 0.65s ease;
+    }
+
+    .mini-card {
+        background: white;
+        padding: 1rem 1rem 0.9rem 1rem;
+        border-radius: 18px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
+        height: 100%;
+        transition: all 0.25s ease;
+    }
+
+    .mini-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 14px 28px rgba(15, 23, 42, 0.10);
+    }
+
+    .stat-card {
+        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+        padding: 1rem 1.1rem;
+        border-radius: 18px;
+        border: 1px solid rgba(148, 163, 184, 0.20);
+        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+        text-align: center;
+        animation: fadeUp 0.6s ease;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 800;
+        color: #0f172a;
         margin-bottom: 0.2rem;
     }
-    .sub-title {
-        font-size: 1.05rem;
-        color: #666666;
-        margin-bottom: 1.4rem;
+
+    .stat-label {
+        font-size: 0.95rem;
+        color: #475569;
+        font-weight: 500;
     }
-    .section-card {
-        padding: 1rem 1.2rem;
-        border-radius: 12px;
-        background-color: #f8f9fb;
-        border: 1px solid #e8e8e8;
+
+    .status-good {
+        padding: 0.85rem 1rem;
+        border-radius: 16px;
+        background: #ecfdf5;
+        color: #065f46;
+        border: 1px solid #a7f3d0;
+        font-weight: 600;
+        margin-bottom: 0.9rem;
+        box-shadow: 0 6px 14px rgba(16, 185, 129, 0.08);
+    }
+
+    .status-info {
+        padding: 0.85rem 1rem;
+        border-radius: 16px;
+        background: #eff6ff;
+        color: #1d4ed8;
+        border: 1px solid #93c5fd;
+        font-weight: 600;
+        margin-bottom: 0.9rem;
+        box-shadow: 0 6px 14px rgba(59, 130, 246, 0.08);
+    }
+
+    .status-warn {
+        padding: 0.85rem 1rem;
+        border-radius: 16px;
+        background: #fff7ed;
+        color: #9a3412;
+        border: 1px solid #fdba74;
+        font-weight: 600;
+        margin-bottom: 0.9rem;
+        box-shadow: 0 6px 14px rgba(249, 115, 22, 0.08);
+    }
+
+    .result-good {
+        padding: 1.1rem 1.2rem;
+        border-radius: 18px;
+        background: linear-gradient(180deg, #ecfdf5 0%, #f0fdf4 100%);
+        border: 1px solid #86efac;
+        color: #166534;
+        font-size: 1.1rem;
+        font-weight: 700;
+        box-shadow: 0 10px 24px rgba(34, 197, 94, 0.12);
+    }
+
+    .result-warn {
+        padding: 1.1rem 1.2rem;
+        border-radius: 18px;
+        background: linear-gradient(180deg, #fff7ed 0%, #fffbeb 100%);
+        border: 1px solid #fdba74;
+        color: #9a3412;
+        font-size: 1.1rem;
+        font-weight: 700;
+        box-shadow: 0 10px 24px rgba(249, 115, 22, 0.12);
+    }
+
+    .glass-note {
+        padding: 0.95rem 1rem;
+        border-radius: 18px;
+        background: rgba(255,255,255,0.8);
+        border: 1px solid rgba(148,163,184,0.18);
+        box-shadow: 0 8px 20px rgba(15,23,42,0.05);
+        color: #334155;
+        line-height: 1.6;
         margin-bottom: 1rem;
     }
-    .result-good {
-        padding: 1rem;
-        border-radius: 12px;
-        background-color: #eaf7ee;
-        border: 1px solid #b8e0c2;
-        color: #145a32;
-        font-size: 1.1rem;
-        font-weight: 600;
+
+    .soft-heading {
+        font-size: 1.08rem;
+        font-weight: 700;
+        color: #0f172a;
+        margin-bottom: 0.55rem;
     }
-    .result-warn {
-        padding: 1rem;
-        border-radius: 12px;
-        background-color: #fff4e5;
-        border: 1px solid #f5c27a;
-        color: #7a4b00;
-        font-size: 1.1rem;
-        font-weight: 600;
+
+    .small-muted {
+        color: #64748b;
+        font-size: 0.94rem;
+        line-height: 1.6;
+    }
+
+    .footer-note {
+        text-align: center;
+        color: #64748b;
+        margin-top: 2rem;
+        font-size: 0.9rem;
+    }
+
+    div.stButton > button {
+        width: 100%;
+        border-radius: 14px;
+        padding: 0.75rem 1rem;
+        border: none;
+        font-weight: 700;
+        color: white;
+        background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+        box-shadow: 0 10px 22px rgba(37, 99, 235, 0.20);
+        transition: all 0.25s ease;
+    }
+
+    div.stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 14px 28px rgba(37, 99, 235, 0.26);
+    }
+
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f172a 0%, #172554 100%);
+    }
+
+    [data-testid="stSidebar"] * {
+        color: white !important;
+    }
+
+    @keyframes fadeUp {
+        from {
+            opacity: 0;
+            transform: translateY(12px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -215,7 +388,6 @@ def find_metadata_match(title: str, uploaded_filename: str, lookup_df: pd.DataFr
 # =========================================================
 def extract_pdf_text_and_pages(uploaded_file):
     try:
-        from io import BytesIO
         from pypdf import PdfReader
 
         file_bytes = uploaded_file.read()
@@ -653,39 +825,166 @@ def predict_paper(
 
 
 # =========================================================
-# UI
+# SIDEBAR
 # =========================================================
-st.markdown('<div class="main-title">Research Paper Quality Prediction System</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="sub-title">Predict whether an individual paper is likely to be 4★ or not 4★ using textual, structural, and metadata-based inputs.</div>',
-    unsafe_allow_html=True
+st.sidebar.markdown("## Navigation")
+page = st.sidebar.radio(
+    "Go to",
+    ["Home", "Predict", "About"]
 )
 
-tab_home, tab_predict, tab_about = st.tabs(["Home", "Predict", "About"])
+st.sidebar.markdown("---")
+st.sidebar.markdown("## System Status")
 
-with tab_home:
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Project Overview")
+model_exists = os.path.exists(MODEL_PATH)
+lookup_exists = os.path.exists(LOOKUP_PATH)
+
+if model_exists:
+    st.sidebar.success("Model file detected")
+else:
+    st.sidebar.error("Model file missing")
+
+if lookup_exists:
+    st.sidebar.success("Metadata lookup detected")
+else:
+    st.sidebar.warning("Metadata lookup missing")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("## Quick Notes")
+st.sidebar.info(
+    "Known papers can be matched automatically using paper ID, filename, or title. "
+    "New papers can still be predicted by entering metadata manually."
+)
+
+
+# =========================================================
+# HOME
+# =========================================================
+if page == "Home":
+    st.markdown("""
+    <div class="hero-box">
+        <div class="hero-title">Research Paper Quality Prediction System</div>
+        <div class="hero-subtitle">
+            A hybrid web application for predicting whether an individual research paper is likely to be
+            <b>4★</b> or <b>Not 4★</b>, using textual content, engineered PDF-based indicators, and metadata features.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("""
+        <div class="stat-card">
+            <div class="stat-value">UOA 11</div>
+            <div class="stat-label">Project Focus</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown("""
+        <div class="stat-card">
+            <div class="stat-value">Binary</div>
+            <div class="stat-label">Classification Task</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c3:
+        st.markdown("""
+        <div class="stat-card">
+            <div class="stat-value">4★ vs Not 4★</div>
+            <div class="stat-label">Prediction Target</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='soft-heading'>Project Overview</div>", unsafe_allow_html=True)
     st.write(
-        "This version uses metadata lookup for known dataset papers and manual metadata fallback for new papers."
+        "This system supports individual research paper assessment through a hybrid modelling approach. "
+        "It combines extracted paper content, structural indicators from PDFs, and contextual metadata "
+        "to produce a classification result."
     )
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.write(
+        "For known papers already prepared in the dataset, the application can automatically load metadata "
+        "from the lookup file. For new papers, the same workflow can still be used with manual metadata completion."
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-with tab_predict:
-    st.subheader("Enter Paper Details")
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.markdown("""
+        <div class="mini-card">
+            <div class="soft-heading">Known Paper Mode</div>
+            <div class="small-muted">
+                Upload a paper that already belongs to the prepared dataset. The application attempts to match
+                the paper using paper ID, normalized filename, or title, and then auto-loads the corresponding metadata.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_b:
+        st.markdown("""
+        <div class="mini-card">
+            <div class="soft-heading">New Paper Mode</div>
+            <div class="small-muted">
+                Upload a completely new paper and the application will still extract text and generate structural
+                features. Missing metadata can then be entered manually before running prediction.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='soft-heading'>Workflow</div>", unsafe_allow_html=True)
+    st.write("1. Enter title or upload a PDF")
+    st.write("2. Extract paper text and abstract-style content")
+    st.write("3. Attempt metadata lookup")
+    st.write("4. Review or complete metadata")
+    st.write("5. Generate engineered features")
+    st.write("6. Run the hybrid prediction model")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# =========================================================
+# PREDICT
+# =========================================================
+elif page == "Predict":
+    st.markdown("""
+    <div class="hero-box">
+        <div class="hero-title">Prediction Workspace</div>
+        <div class="hero-subtitle">
+            Upload a research paper PDF, review the extracted paper information, confirm metadata,
+            and run the hybrid model to predict whether the paper is likely to be 4★ or Not 4★.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     lookup_df = load_metadata_lookup()
 
-    left_col, right_col = st.columns(2)
+    top_left, top_right = st.columns([1.4, 1])
 
-    with left_col:
+    with top_left:
+        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+        st.subheader("Paper Input")
         title_input = st.text_input("Paper Title", "")
         uploaded_pdf = st.file_uploader("Upload Paper PDF (optional)", type=["pdf"])
         manual_text = st.text_area(
             "Abstract / Extracted Text / Key Paper Content",
-            height=220,
+            height=240,
             placeholder="Paste abstract or important paper text here..."
         )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with top_right:
+        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+        st.subheader("Input Guidance")
+        st.markdown("""
+        <div class="glass-note">
+            <b>Best results:</b><br>
+            • upload a readable PDF for known papers<br>
+            • keep the title accurate<br>
+            • confirm the metadata fields before prediction<br>
+            • use manual text when PDF extraction is weak
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     text_for_features = manual_text
     abstract_for_model = manual_text
@@ -706,18 +1005,68 @@ with tab_predict:
             if guessed_abstract:
                 abstract_for_model = guessed_abstract
                 text_for_features = pdf_text
-                st.success("PDF text extracted and abstract-style content will be used for prediction.")
+                st.markdown(
+                    '<div class="status-good">PDF text extracted successfully. Abstract-style content will be used for prediction.</div>',
+                    unsafe_allow_html=True
+                )
             else:
                 text_for_features = pdf_text
                 abstract_for_model = manual_text if manual_text.strip() else pdf_text[:3000]
-                st.warning("PDF abstract could not be isolated clearly. Fallback text will be used.")
+                st.markdown(
+                    '<div class="status-warn">PDF text was extracted, but the abstract could not be isolated clearly. Fallback text will be used.</div>',
+                    unsafe_allow_html=True
+                )
         else:
-            st.warning("PDF text could not be extracted. The manually entered text will be used instead.")
+            st.markdown(
+                '<div class="status-warn">PDF text could not be extracted. The manually entered text will be used instead.</div>',
+                unsafe_allow_html=True
+            )
 
     matched_metadata = find_metadata_match(final_title, uploaded_filename, lookup_df)
 
+    if matched_metadata:
+        st.markdown(
+            '<div class="status-good">Known paper matched in metadata lookup. Stored metadata has been loaded automatically.</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            '<div class="status-info">No lookup match was found. Please enter metadata manually for the best possible prediction.</div>',
+            unsafe_allow_html=True
+        )
+
+    metric_1, metric_2, metric_3 = st.columns(3)
+    with metric_1:
+        st.metric("Detected Pages", detected_page_count)
+    with metric_2:
+        st.metric("PDF Uploaded", "Yes" if uploaded_pdf is not None else "No")
+    with metric_3:
+        st.metric("Metadata Match", "Yes" if matched_metadata else "No")
+
+    left_col, right_col = st.columns([1.1, 1])
+
+    with left_col:
+        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+        st.subheader("Extracted Paper Information")
+
+        if final_title:
+            st.write(f"**Final title used:** {final_title}")
+        else:
+            st.write("**Final title used:** Not available yet")
+
+        if uploaded_filename:
+            st.write(f"**Uploaded file:** {uploaded_filename}")
+
+        preview_text = clean_text(abstract_for_model)[:1200]
+        if preview_text:
+            st.text_area("Text preview used for model input", preview_text, height=220, disabled=True)
+        else:
+            st.info("No paper text is currently available.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
     with right_col:
-        st.markdown("### Metadata")
+        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+        st.subheader("Metadata")
 
         default_citation = matched_metadata.get("Citation count", 0) if matched_metadata else 0
         default_publisher = matched_metadata.get("Publisher", "Unknown") if matched_metadata else "Unknown"
@@ -727,11 +1076,6 @@ with tab_predict:
         default_uoa = matched_metadata.get("Unit of assessment name", "Computer Science and Informatics") if matched_metadata else "Computer Science and Informatics"
         default_oa = matched_metadata.get("Open access status", "Unknown") if matched_metadata else "Unknown"
         default_year = matched_metadata.get("Year", 0) if matched_metadata else 0
-
-        if matched_metadata:
-            st.success("Known paper matched in metadata lookup. Real metadata has been loaded.")
-        else:
-            st.info("No lookup match found. Please enter metadata manually for best results.")
 
         citation_count = st.number_input(
             "Citation Count",
@@ -765,8 +1109,9 @@ with tab_predict:
             oa_options,
             index=oa_options.index(default_oa)
         )
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    if st.button("Predict"):
+    if st.button("Run Prediction"):
         if not final_title.strip():
             st.error("Please enter the paper title, or upload a PDF with a readable first line/title.")
         elif not abstract_for_model.strip():
@@ -797,7 +1142,6 @@ with tab_predict:
                 st.markdown("---")
                 st.subheader("Prediction Result")
 
-                # Training target: is_4_star = (label == 4).astype(int)
                 if pred == 1:
                     st.markdown(
                         '<div class="result-good">Predicted Class: 4★ Paper</div>',
@@ -812,6 +1156,14 @@ with tab_predict:
                 if confidence is not None:
                     st.write(f"**Confidence:** {confidence:.2%}")
 
+                result_col1, result_col2, result_col3 = st.columns(3)
+                with result_col1:
+                    st.metric("Prediction", "4★" if pred == 1 else "Not 4★")
+                with result_col2:
+                    st.metric("Confidence", f"{confidence:.2%}" if confidence is not None else "N/A")
+                with result_col3:
+                    st.metric("Processed", datetime.now().strftime("%H:%M:%S"))
+
                 with st.expander("Show prediction debug info"):
                     st.write("Raw prediction:", pred)
                     st.write("Classifier classes:", classifier_classes)
@@ -819,11 +1171,60 @@ with tab_predict:
                     st.json(debug_info)
 
                 with st.expander("Show input row used for inference"):
-                    st.dataframe(debug_df.T)
+                    st.dataframe(debug_df.T, use_container_width=True)
 
             except Exception as e:
                 st.error(f"Prediction failed: {e}")
 
-with tab_about:
-    with st.expander("Runtime dependency check"):
-        st.json(check_runtime_dependencies())
+
+# =========================================================
+# ABOUT
+# =========================================================
+elif page == "About":
+    st.markdown("""
+    <div class="hero-box">
+        <div class="hero-title">About the Project</div>
+        <div class="hero-subtitle">
+            This application forms part of an MSc project on research paper quality prediction
+            for Unit of Assessment 11: Computer Science and Informatics.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("""
+        <div class="mini-card">
+            <div class="soft-heading">Research Context</div>
+            <div class="small-muted">
+                The project investigates whether the quality of an individual research paper can be predicted
+                using a hybrid combination of textual features, engineered PDF-based indicators, and metadata.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("""
+        <div class="mini-card">
+            <div class="soft-heading">Current Scope</div>
+            <div class="small-muted">
+                The present version focuses on binary classification: predicting whether a paper is likely to be
+                4★ or Not 4★. It supports metadata lookup for known papers and manual metadata entry for new papers.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+    st.subheader("Runtime Dependency Check")
+    st.json(check_runtime_dependencies())
+    st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown(
+    """
+    <div class="footer-note">
+        Research Paper Quality Prediction System · Streamlit Web Application
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
