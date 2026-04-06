@@ -1,5 +1,6 @@
 import os
 import re
+import uuid
 import pickle
 import importlib
 from io import BytesIO
@@ -8,6 +9,13 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
+
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except Exception:
+    OPENAI_AVAILABLE = False
 
 
 # =========================================================
@@ -23,6 +31,51 @@ st.set_page_config(
 MODEL_PATH = "binary_hybrid_logistic.pkl"
 LOOKUP_PATH = "metadata_lookup.csv"
 
+APP_ASSISTANT_SYSTEM_PROMPT = """
+You are a friendly in-app assistant for a Streamlit application called
+'Research Paper Quality Prediction System'.
+
+Your job is ONLY to help users with:
+- how to use the app
+- what known paper mode means
+- what new paper mode means
+- why metadata is needed
+- what 4★ vs Not 4★ means in this project
+- what citation count / publisher / institution / open access fields are for
+- basic demo or viva guidance
+- how PDF upload and metadata lookup work
+
+Do NOT answer unrelated general knowledge questions in depth.
+If the user asks something outside the app's scope, politely redirect them
+back to app-related help.
+
+Keep answers clear, supportive, and concise.
+"""
+
+
+# =========================================================
+# SESSION STATE
+# =========================================================
+if "helper_messages" not in st.session_state:
+    st.session_state["helper_messages"] = [
+        {
+            "role": "assistant",
+            "content": (
+                "Hello — I’m your app guide. Ask me how to use the system, "
+                "what metadata means, or how to present the app in your demo."
+            )
+        }
+    ]
+
+if "assistant_previous_response_id" not in st.session_state:
+    st.session_state["assistant_previous_response_id"] = None
+
+if "assistant_session_id" not in st.session_state:
+    st.session_state["assistant_session_id"] = str(uuid.uuid4())
+
+if "use_gpt_helper" not in st.session_state:
+    st.session_state["use_gpt_helper"] = True
+
 
 # =========================================================
 # STYLING
@@ -34,7 +87,7 @@ st.markdown("""
     }
 
     .block-container {
-        padding-top: 1.5rem;
+        padding-top: 1.4rem;
         padding-bottom: 2rem;
         max-width: 1400px;
     }
@@ -64,7 +117,7 @@ st.markdown("""
     }
 
     .section-card {
-        background: rgba(255, 255, 255, 0.92);
+        background: rgba(255, 255, 255, 0.94);
         backdrop-filter: blur(6px);
         padding: 1.15rem 1.25rem;
         border-radius: 20px;
@@ -290,6 +343,20 @@ def split_sentences(text: str):
     return [s.strip() for s in sentences if s.strip()]
 
 
+def get_secret_value(key_name: str, default: str = "") -> str:
+    try:
+        if key_name in st.secrets:
+            return st.secrets[key_name]
+    except Exception:
+        pass
+    return os.getenv(key_name, default)
+
+
+def gpt_helper_ready() -> bool:
+    api_key = get_secret_value("OPENAI_API_KEY", "")
+    return OPENAI_AVAILABLE and bool(api_key)
+
+
 # =========================================================
 # RUNTIME CHECK
 # =========================================================
@@ -304,6 +371,9 @@ def check_runtime_dependencies():
             results[pkg] = f"OK ({version})"
         except Exception as e:
             results[pkg] = f"ERROR: {e}"
+
+    results["openai"] = "OK" if OPENAI_AVAILABLE else "Not installed"
+    results["gpt_helper_configured"] = "Yes" if gpt_helper_ready() else "No"
 
     return results
 
@@ -825,6 +895,364 @@ def predict_paper(
 
 
 # =========================================================
+# ASSISTANT UI
+# =========================================================
+def render_avatar_assistant(messages, title="Ava · App Guide", subtitle="Ask me about uploads, metadata, or demo tips."):
+    messages_js = str(messages).replace("'", "\\'")
+    html = f"""
+    <html>
+    <head>
+    <style>
+        body {{
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            font-family: Inter, Arial, sans-serif;
+        }}
+
+        .wrap {{
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(241,245,249,0.95));
+            border: 1px solid rgba(148,163,184,0.18);
+            border-radius: 24px;
+            padding: 20px;
+            box-shadow: 0 14px 28px rgba(15,23,42,0.08);
+            overflow: hidden;
+        }}
+
+        .avatar-shell {{
+            position: relative;
+            width: 110px;
+            height: 110px;
+            flex-shrink: 0;
+            animation: popIn 0.8s ease;
+        }}
+
+        .halo {{
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(99,102,241,0.28), rgba(99,102,241,0.02) 68%);
+            animation: pulse 2.2s infinite ease-in-out;
+        }}
+
+        .avatar {{
+            position: absolute;
+            inset: 12px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 46px;
+            color: white;
+            box-shadow: 0 10px 22px rgba(79,70,229,0.25);
+            animation: floaty 3s infinite ease-in-out;
+        }}
+
+        .bubble {{
+            flex: 1;
+            background: white;
+            border-radius: 22px;
+            padding: 16px 18px;
+            border: 1px solid rgba(148,163,184,0.18);
+            box-shadow: 0 10px 20px rgba(15,23,42,0.06);
+            min-height: 110px;
+        }}
+
+        .name {{
+            font-size: 16px;
+            font-weight: 800;
+            color: #0f172a;
+            margin-bottom: 6px;
+        }}
+
+        .subtitle {{
+            font-size: 13px;
+            color: #64748b;
+            margin-bottom: 8px;
+        }}
+
+        .text {{
+            font-size: 16px;
+            color: #1e293b;
+            line-height: 1.6;
+            min-height: 48px;
+            transition: opacity 0.35s ease;
+        }}
+
+        .dots {{
+            margin-top: 8px;
+            display: flex;
+            gap: 6px;
+        }}
+
+        .dot {{
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #94a3b8;
+            animation: blink 1.4s infinite ease-in-out;
+        }}
+
+        .dot:nth-child(2) {{ animation-delay: 0.2s; }}
+        .dot:nth-child(3) {{ animation-delay: 0.4s; }}
+
+        @keyframes popIn {{
+            from {{ transform: scale(0.75); opacity: 0; }}
+            to {{ transform: scale(1); opacity: 1; }}
+        }}
+
+        @keyframes pulse {{
+            0% {{ transform: scale(1); opacity: 0.8; }}
+            50% {{ transform: scale(1.12); opacity: 0.35; }}
+            100% {{ transform: scale(1); opacity: 0.8; }}
+        }}
+
+        @keyframes floaty {{
+            0% {{ transform: translateY(0px); }}
+            50% {{ transform: translateY(-6px); }}
+            100% {{ transform: translateY(0px); }}
+        }}
+
+        @keyframes blink {{
+            0%, 80%, 100% {{ opacity: 0.3; transform: scale(0.9); }}
+            40% {{ opacity: 1; transform: scale(1.1); }}
+        }}
+    </style>
+    </head>
+    <body>
+        <div class="wrap">
+            <div class="avatar-shell">
+                <div class="halo"></div>
+                <div class="avatar">👩‍💻</div>
+            </div>
+            <div class="bubble">
+                <div class="name">{title}</div>
+                <div class="subtitle">{subtitle}</div>
+                <div class="text" id="assistantText"></div>
+                <div class="dots">
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const messages = {messages};
+            const el = document.getElementById("assistantText");
+            let idx = 0;
+
+            function showMessage() {{
+                el.style.opacity = 0.15;
+                setTimeout(() => {{
+                    el.innerText = messages[idx];
+                    el.style.opacity = 1;
+                    idx = (idx + 1) % messages.length;
+                }}, 180);
+            }}
+
+            showMessage();
+            setInterval(showMessage, 3200);
+        </script>
+    </body>
+    </html>
+    """
+    components.html(html, height=200)
+
+
+# =========================================================
+# ASSISTANT LOGIC
+# =========================================================
+def local_app_help(question: str) -> str:
+    q = normalize_text(question)
+
+    if any(x in q for x in ["how do i use", "how to use", "how can i use", "start", "begin", "upload"]):
+        return (
+            "Go to the Predict page, enter a title or upload a PDF, review the extracted text, "
+            "confirm the metadata on the right, and then click Run Prediction."
+        )
+
+    if "known paper" in q or "lookup" in q or "metadata match" in q:
+        return (
+            "A known paper is one that already exists in your prepared dataset. "
+            "The app tries to match it using paper ID, normalized filename, or title, "
+            "then loads metadata automatically from metadata_lookup.csv."
+        )
+
+    if "new paper" in q or "manual metadata" in q or "unseen" in q:
+        return (
+            "A new paper is not found in the lookup file. The app can still extract text from the PDF, "
+            "but you should manually complete metadata such as citation count, institution, publisher, "
+            "open access status, and year for the best result."
+        )
+
+    if "metadata" in q or "citation" in q or "publisher" in q or "institution" in q or "open access" in q:
+        return (
+            "Metadata gives the hybrid model extra context beyond the paper text. "
+            "In this project, fields like citation count, publisher, institution, main panel, "
+            "UOA name, open access status, and year can all support the prediction."
+        )
+
+    if "4★" in question or "4 star" in q or "not 4" in q:
+        return (
+            "This app performs binary classification. It predicts whether a paper is likely to be "
+            "4★ or Not 4★ within the current project framing for UOA 11."
+        )
+
+    if "ukprn" in q:
+        return (
+            "UKPRN is an institution identifier. In your current app logic, it stays as part of the model input "
+            "if the saved model expects it, even though it is not a naturally meaningful continuous number."
+        )
+
+    if "demo" in q or "viva" in q or "presentation" in q:
+        return (
+            "For the best demo, start with a known paper so the metadata loads automatically. "
+            "Then explain that new papers may require manual metadata because a hybrid model needs more "
+            "than PDF text alone."
+        )
+
+    if "pdf" in q or "abstract" in q or "text extraction" in q:
+        return (
+            "When you upload a PDF, the app tries to extract page text, guess the title, and isolate abstract-style content. "
+            "If extraction is weak, the manually entered text becomes the fallback."
+        )
+
+    return (
+        "I can help with using the app, metadata fields, known paper matching, new paper workflow, "
+        "PDF extraction, and demo tips. Try asking something like: "
+        "'How do I use this app?' or 'Why is metadata needed?'"
+    )
+
+
+def ask_gpt_helper(question: str, current_page: str, model_exists: bool, lookup_exists: bool) -> str:
+    api_key = get_secret_value("OPENAI_API_KEY", "")
+    model_name = get_secret_value("OPENAI_MODEL", "gpt-4.1-mini")
+
+    if not OPENAI_AVAILABLE:
+        raise RuntimeError("The openai package is not installed.")
+
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not configured.")
+
+    client = OpenAI(api_key=api_key)
+
+    app_context = f"""
+Current page: {current_page}
+Model file present: {'Yes' if model_exists else 'No'}
+Metadata lookup present: {'Yes' if lookup_exists else 'No'}
+Session ID: {st.session_state['assistant_session_id']}
+"""
+
+    kwargs = {
+        "model": model_name,
+        "instructions": APP_ASSISTANT_SYSTEM_PROMPT,
+        "input": f"{app_context}\nUser question: {question}",
+        "max_output_tokens": 260,
+        "temperature": 0.3,
+        "safety_identifier": st.session_state["assistant_session_id"],
+    }
+
+    previous_response_id = st.session_state.get("assistant_previous_response_id")
+    if previous_response_id:
+        kwargs["previous_response_id"] = previous_response_id
+
+    response = client.responses.create(**kwargs)
+
+    st.session_state["assistant_previous_response_id"] = getattr(response, "id", None)
+
+    output_text = getattr(response, "output_text", "")
+    if output_text and str(output_text).strip():
+        return str(output_text).strip()
+
+    return "I could not generate a reply just now. Please try again."
+
+
+def respond_from_assistant(question: str, current_page: str, model_exists: bool, lookup_exists: bool) -> str:
+    if st.session_state.get("use_gpt_helper", True) and gpt_helper_ready():
+        try:
+            return ask_gpt_helper(question, current_page, model_exists, lookup_exists)
+        except Exception:
+            fallback = local_app_help(question)
+            return (
+                fallback
+                + "\n\n_(The GPT helper was unavailable just now, so I answered using the built-in app guide.)_"
+            )
+
+    return local_app_help(question)
+
+
+def reset_assistant_chat():
+    st.session_state["helper_messages"] = [
+        {
+            "role": "assistant",
+            "content": (
+                "Hello — I’m your app guide. Ask me how to use the system, "
+                "what metadata means, or how to present the app in your demo."
+            )
+        }
+    ]
+    st.session_state["assistant_previous_response_id"] = None
+
+
+def render_help_chat(current_page: str, model_exists: bool, lookup_exists: bool):
+    st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+    st.subheader("Ask the App Assistant")
+
+    mode_text = "GPT helper enabled" if gpt_helper_ready() and st.session_state["use_gpt_helper"] else "Built-in help mode"
+    st.caption(f"Assistant mode: {mode_text}")
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.checkbox(
+            "Use GPT helper when available",
+            key="use_gpt_helper"
+        )
+    with c2:
+        if st.button("Clear assistant chat", key=f"clear_chat_{current_page}"):
+            reset_assistant_chat()
+            st.rerun()
+
+    st.write("Quick help prompts:")
+    q1, q2, q3, q4 = st.columns(4)
+
+    prompt = None
+    if q1.button("How do I use the app?", key=f"q1_{current_page}"):
+        prompt = "How do I use this app?"
+    if q2.button("Why is metadata needed?", key=f"q2_{current_page}"):
+        prompt = "Why is metadata needed?"
+    if q3.button("What is a known paper?", key=f"q3_{current_page}"):
+        prompt = "What is a known paper?"
+    if q4.button("How should I demo this?", key=f"q4_{current_page}"):
+        prompt = "How should I demo this app in my viva?"
+
+    user_prompt = st.chat_input(
+        "Ask about the app, metadata, prediction flow, or demo tips...",
+        key=f"chat_input_{current_page}"
+    )
+
+    if user_prompt:
+        prompt = user_prompt
+
+    if prompt:
+        st.session_state["helper_messages"].append({"role": "user", "content": prompt})
+        with st.spinner("Assistant is thinking..."):
+            answer = respond_from_assistant(prompt, current_page, model_exists, lookup_exists)
+        st.session_state["helper_messages"].append({"role": "assistant", "content": answer})
+        st.rerun()
+
+    for msg in st.session_state["helper_messages"]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# =========================================================
 # SIDEBAR
 # =========================================================
 st.sidebar.markdown("## Navigation")
@@ -850,6 +1278,14 @@ else:
     st.sidebar.warning("Metadata lookup missing")
 
 st.sidebar.markdown("---")
+st.sidebar.markdown("## Assistant Status")
+
+if gpt_helper_ready():
+    st.sidebar.success("GPT helper ready")
+else:
+    st.sidebar.info("GPT helper not configured")
+
+st.sidebar.markdown("---")
 st.sidebar.markdown("## Quick Notes")
 st.sidebar.info(
     "Known papers can be matched automatically using paper ID, filename, or title. "
@@ -870,6 +1306,17 @@ if page == "Home":
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    render_avatar_assistant(
+        messages=[
+            "Welcome! I can guide you through the paper prediction workflow.",
+            "Upload a known paper to auto-load metadata from the lookup file.",
+            "For new papers, I’ll help you understand which metadata fields to fill in.",
+            "Use the help chat below if you have any doubts about the app or demo."
+        ],
+        title="Ava · Welcome Guide",
+        subtitle="Your animated app assistant"
+    )
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -941,6 +1388,8 @@ if page == "Home":
     st.write("6. Run the hybrid prediction model")
     st.markdown("</div>", unsafe_allow_html=True)
 
+    render_help_chat("Home", model_exists, lookup_exists)
+
 
 # =========================================================
 # PREDICT
@@ -955,6 +1404,17 @@ elif page == "Predict":
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    render_avatar_assistant(
+        messages=[
+            "Start by entering a title or uploading a PDF.",
+            "I’ll help the app identify known papers through metadata lookup.",
+            "Check the metadata carefully before running prediction.",
+            "Use the help chat below if you want demo tips or explanations."
+        ],
+        title="Ava · Prediction Guide",
+        subtitle="Helping you through the prediction process"
+    )
 
     lookup_df = load_metadata_lookup()
 
@@ -1176,6 +1636,8 @@ elif page == "Predict":
             except Exception as e:
                 st.error(f"Prediction failed: {e}")
 
+    render_help_chat("Predict", model_exists, lookup_exists)
+
 
 # =========================================================
 # ABOUT
@@ -1190,6 +1652,17 @@ elif page == "About":
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    render_avatar_assistant(
+        messages=[
+            "This project focuses on predicting 4★ versus Not 4★ papers.",
+            "The model combines text, engineered PDF indicators, and metadata.",
+            "Known papers can use automatic lookup; new papers may need manual metadata.",
+            "You can ask me questions about the app in the chat below."
+        ],
+        title="Ava · Project Guide",
+        subtitle="Explaining the project and the app"
+    )
 
     col1, col2 = st.columns(2)
 
@@ -1219,6 +1692,8 @@ elif page == "About":
     st.subheader("Runtime Dependency Check")
     st.json(check_runtime_dependencies())
     st.markdown("</div>", unsafe_allow_html=True)
+
+    render_help_chat("About", model_exists, lookup_exists)
 
 st.markdown(
     """
