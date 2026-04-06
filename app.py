@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+
 # =========================================================
 # CONFIG
 # =========================================================
@@ -17,6 +18,7 @@ st.set_page_config(
 
 MODEL_PATH = "binary_hybrid_logistic.pkl"
 LOOKUP_PATH = "metadata_lookup.csv"
+
 
 # =========================================================
 # STYLING
@@ -61,8 +63,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
 # =========================================================
-# HELPERS
+# BASIC HELPERS
 # =========================================================
 def normalize_text(s: str) -> str:
     s = str(s or "").strip().lower()
@@ -71,7 +74,14 @@ def normalize_text(s: str) -> str:
 
 
 def normalize_filename(name: str) -> str:
-    return os.path.basename(str(name or "").strip().lower())
+    name = os.path.basename(str(name or "").strip().lower())
+    name = re.sub(r"_dup\d+(?=\.pdf$)", "", name)
+    return name
+
+
+def extract_paper_id(value: str) -> str:
+    m = re.search(r"(P\d+)", str(value or ""), re.IGNORECASE)
+    return m.group(1).upper() if m else ""
 
 
 def safe_float(value, default=0.0):
@@ -154,7 +164,7 @@ def load_metadata_lookup():
 
     df = pd.read_csv(LOOKUP_PATH)
 
-    for col in ["Title", "pdf_file"]:
+    for col in ["paper_id", "Title", "pdf_file"]:
         if col in df.columns:
             df[col] = df[col].fillna("").astype(str).str.strip()
 
@@ -170,30 +180,32 @@ def find_metadata_match(title: str, uploaded_filename: str, lookup_df: pd.DataFr
 
     norm_title = normalize_text(title)
     norm_file = normalize_filename(uploaded_filename)
+    paper_id = extract_paper_id(uploaded_filename)
 
-    # exact pdf file match
-    if norm_file and "pdf_file" in lookup_df.columns:
-        temp = lookup_df.copy()
+    temp = lookup_df.copy()
+
+    if "paper_id" in temp.columns:
+        temp["_paper_id"] = temp["paper_id"].astype(str).str.upper().str.strip()
+        pid_matches = temp[temp["_paper_id"] == paper_id]
+        if len(pid_matches) > 0:
+            return pid_matches.iloc[0].to_dict()
+
+    if "pdf_file" in temp.columns:
         temp["_norm_pdf"] = temp["pdf_file"].apply(normalize_filename)
-        matches = temp[temp["_norm_pdf"] == norm_file]
-        if len(matches) > 0:
-            return matches.iloc[0].to_dict()
+        file_matches = temp[temp["_norm_pdf"] == norm_file]
+        if len(file_matches) > 0:
+            return file_matches.iloc[0].to_dict()
 
-    # exact title match
-    if norm_title and "Title" in lookup_df.columns:
-        temp = lookup_df.copy()
+    if norm_title and "Title" in temp.columns:
         temp["_norm_title"] = temp["Title"].apply(normalize_text)
-        matches = temp[temp["_norm_title"] == norm_title]
-        if len(matches) > 0:
-            return matches.iloc[0].to_dict()
 
-    # partial title match
-    if norm_title and "Title" in lookup_df.columns:
-        temp = lookup_df.copy()
-        temp["_norm_title"] = temp["Title"].apply(normalize_text)
-        matches = temp[temp["_norm_title"].str.contains(norm_title, na=False)]
-        if len(matches) > 0:
-            return matches.iloc[0].to_dict()
+        exact_title_matches = temp[temp["_norm_title"] == norm_title]
+        if len(exact_title_matches) > 0:
+            return exact_title_matches.iloc[0].to_dict()
+
+        partial_title_matches = temp[temp["_norm_title"].str.contains(norm_title, na=False)]
+        if len(partial_title_matches) > 0:
+            return partial_title_matches.iloc[0].to_dict()
 
     return None
 
@@ -516,15 +528,14 @@ def prepare_single_input_dataframe(
     return pd.DataFrame([row])
 
 
-# =========================================================
-# REPLACE YOUR OLD build_feature_matrix WITH THIS ONE
-# =========================================================
 def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
     embedder_name = bundle.get("embedder_name", "all-MiniLM-L6-v2")
     text_feature = bundle.get("text_feature", "combined_text")
     numeric_features = bundle.get("numeric_features", [])
     categorical_features = bundle.get("categorical_features", [])
 
+    cat_imputer = bundle.get("cat_imputer", None)
+    num_imputer = bundle.get("num_imputer", None)
     scaler = bundle.get("scaler", None)
     classifier = bundle.get("classifier", None)
     ohe = bundle.get("ohe", None)
@@ -534,31 +545,43 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
 
     embedder = load_embedder(embedder_name)
     text_values = df_input[text_feature].fillna("").astype(str).tolist()
-    X_text = embedder.encode(text_values, convert_to_numpy=True)
-
-    X_num = np.empty((len(df_input), 0))
-    if numeric_features:
-        X_num_df = df_input.reindex(columns=numeric_features, fill_value=0).copy()
-        X_num_df = X_num_df.apply(pd.to_numeric, errors="coerce").fillna(0.0)
-
-        if scaler is not None:
-            X_num = scaler.transform(X_num_df)
-        else:
-            X_num = X_num_df.to_numpy(dtype=float)
+    X_text = embedder.encode(
+        text_values,
+        convert_to_numpy=True,
+        normalize_embeddings=True
+    )
 
     X_cat = np.empty((len(df_input), 0))
     if categorical_features:
         X_cat_df = df_input.reindex(columns=categorical_features, fill_value="Unknown").copy()
         X_cat_df = X_cat_df.fillna("Unknown").astype(str)
 
+        if cat_imputer is not None:
+            X_cat_raw = cat_imputer.transform(X_cat_df)
+        else:
+            X_cat_raw = X_cat_df.values
+
         if ohe is not None:
-            X_cat = ohe.transform(X_cat_df)
+            X_cat = ohe.transform(X_cat_raw)
             if hasattr(X_cat, "toarray"):
                 X_cat = X_cat.toarray()
-        else:
-            X_cat = np.empty((len(df_input), 0))
 
-    X_parts = [arr for arr in [X_text, X_num, X_cat] if arr.shape[1] > 0]
+    X_num = np.empty((len(df_input), 0))
+    if numeric_features:
+        X_num_df = df_input.reindex(columns=numeric_features, fill_value=0).copy()
+        X_num_df = X_num_df.apply(pd.to_numeric, errors="coerce")
+
+        if num_imputer is not None:
+            X_num_imputed = num_imputer.transform(X_num_df)
+        else:
+            X_num_imputed = X_num_df.fillna(0.0).to_numpy(dtype=float)
+
+        if scaler is not None:
+            X_num = scaler.transform(X_num_imputed)
+        else:
+            X_num = np.asarray(X_num_imputed, dtype=float)
+
+    X_parts = [arr for arr in [X_text, X_cat, X_num] if arr.shape[1] > 0]
     if not X_parts:
         raise ValueError("No features were generated for prediction.")
 
@@ -568,12 +591,12 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
         "text_feature_name": text_feature,
         "embedder_name": embedder_name,
         "X_text_shape": X_text.shape,
-        "X_num_shape": X_num.shape,
         "X_cat_shape": X_cat.shape,
+        "X_num_shape": X_num.shape,
         "X_final_shape": X_final.shape,
         "X_text_sum": float(np.sum(X_text)),
-        "X_num_sum": float(np.sum(X_num)) if X_num.size else 0.0,
         "X_cat_sum": float(np.sum(X_cat)) if X_cat.size else 0.0,
+        "X_num_sum": float(np.sum(X_num)) if X_num.size else 0.0,
         "X_final_sum": float(np.sum(X_final)),
         "X_final_mean": float(np.mean(X_final)),
         "X_final_std": float(np.std(X_final)),
@@ -643,7 +666,9 @@ tab_home, tab_predict, tab_about = st.tabs(["Home", "Predict", "About"])
 with tab_home:
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.subheader("Project Overview")
-    st.write("This version uses metadata lookup for known dataset papers and manual fallback for new papers.")
+    st.write(
+        "This version uses metadata lookup for known dataset papers and manual metadata fallback for new papers."
+    )
     st.markdown('</div>', unsafe_allow_html=True)
 
 with tab_predict:
@@ -772,6 +797,7 @@ with tab_predict:
                 st.markdown("---")
                 st.subheader("Prediction Result")
 
+                # Training target: is_4_star = (label == 4).astype(int)
                 if pred == 1:
                     st.markdown(
                         '<div class="result-good">Predicted Class: 4★ Paper</div>',
