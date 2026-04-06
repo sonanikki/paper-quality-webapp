@@ -1,6 +1,6 @@
 import os
 import re
-import joblib
+import pickle
 import importlib
 import numpy as np
 import pandas as pd
@@ -68,12 +68,16 @@ st.markdown("""
 # =========================================================
 def check_runtime_dependencies():
     results = {}
-    package_names = ["sklearn", "pypdf", "sentence_transformers", "torch", "joblib"]
+    package_names = ["sklearn", "pypdf", "sentence_transformers", "torch", "pickle"]
 
     for pkg in package_names:
         try:
-            mod = importlib.import_module(pkg)
-            version = getattr(mod, "__version__", "version unknown")
+            if pkg == "pickle":
+                import pickle as mod
+                version = "builtin"
+            else:
+                mod = importlib.import_module(pkg)
+                version = getattr(mod, "__version__", "version unknown")
             results[pkg] = f"OK ({version})"
         except Exception as e:
             results[pkg] = f"ERROR: {e}"
@@ -90,7 +94,8 @@ def load_model_bundle():
         raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
 
     try:
-        bundle = joblib.load(MODEL_PATH)
+        with open(MODEL_PATH, "rb") as f:
+            bundle = pickle.load(f)
         return bundle
     except Exception as e:
         raise RuntimeError(f"Failed to load model bundle: {e}")
@@ -135,6 +140,32 @@ def clean_text(text: str) -> str:
     if not text:
         return ""
     return re.sub(r"\s+", " ", text).strip()
+
+
+def extract_title_and_abstract(text: str):
+    """
+    Match the notebook/web-app idea more closely:
+    use title-like first line + abstract-style extracted text,
+    not the whole PDF as combined_text.
+    """
+    if not text or not text.strip():
+        return "", ""
+
+    lines = [x.strip() for x in text.splitlines() if x.strip()]
+    guessed_title = lines[0][:250] if lines else ""
+
+    abstract = ""
+    m = re.search(
+        r"abstract\s*(.*?)(introduction|keywords|\n\n)",
+        text,
+        re.IGNORECASE | re.DOTALL
+    )
+    if m:
+        abstract = m.group(1).strip()
+    else:
+        abstract = text[:3000].strip()
+
+    return guessed_title, abstract[:3000]
 
 
 def safe_float(value, default=0.0):
@@ -320,6 +351,11 @@ def vocabulary_richness(text: str) -> float:
 
 
 def build_engineered_features(raw_text: str, page_count: int, title: str):
+    """
+    Build numeric features.
+    Missing features will still be filled later from the model bundle,
+    but this gives the model realistic values instead of only defaults.
+    """
     text = clean_text(raw_text)
     words = tokenize_words(text)
     sentences = split_sentences(text)
@@ -339,7 +375,7 @@ def build_engineered_features(raw_text: str, page_count: int, title: str):
         "Year": 0,
         "pdf_found": int(page_count > 0),
         "page_count": page_count,
-        "abstract_text": text[:2000],
+        "abstract_text": text[:3000],
         "abstract_present": binary_present(r"\babstract\b", text),
         "word_count": word_count,
         "unique_word_count": unique_word_count,
@@ -371,15 +407,15 @@ def build_engineered_features(raw_text: str, page_count: int, title: str):
     return features
 
 
-def make_combined_text(title: str, abstract_or_text: str) -> str:
+def make_combined_text(title: str, abstract_text: str) -> str:
     title = clean_text(title)
-    abstract_or_text = clean_text(abstract_or_text)
-    return f"{title}. {abstract_or_text}".strip()
+    abstract_text = clean_text(abstract_text)
+    return f"{title} {abstract_text}".strip()
 
 
 def prepare_single_input_dataframe(
     title: str,
-    combined_text: str,
+    abstract_text: str,
     citation_count,
     publisher: str,
     institution_name: str,
@@ -392,8 +428,9 @@ def prepare_single_input_dataframe(
     row = dict(engineered_features)
 
     row["Title"] = title
-    row["combined_text"] = combined_text
-    row["Citation count"] = safe_float(citation_count, 0)
+    row["abstract_text"] = abstract_text
+    row["combined_text"] = make_combined_text(title, abstract_text)
+    row["Citation count"] = safe_float(citation_count, 0.0)
     row["Publisher"] = publisher
     row["Institution name"] = institution_name
     row["Main panel"] = main_panel
@@ -411,9 +448,6 @@ def prepare_single_input_dataframe(
         if col not in row:
             row[col] = "Unknown"
 
-    if "combined_text" not in row:
-        row["combined_text"] = combined_text
-
     return pd.DataFrame([row])
 
 
@@ -423,6 +457,8 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
     numeric_features = bundle.get("numeric_features", [])
     categorical_features = bundle.get("categorical_features", [])
 
+    cat_imputer = bundle.get("cat_imputer", None)
+    num_imputer = bundle.get("num_imputer", None)
     scaler = bundle.get("scaler", None)
     classifier = bundle.get("classifier", None)
     ohe = bundle.get("ohe", None)
@@ -430,43 +466,73 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
     if classifier is None:
         raise ValueError("Classifier not found in model bundle.")
 
+    # TEXT: match notebook cell 103
     embedder = load_embedder(embedder_name)
     text_values = df_input[text_feature].fillna("").astype(str).tolist()
-    X_text = embedder.encode(text_values, convert_to_numpy=True)
+    X_text = embedder.encode(
+        text_values,
+        convert_to_numpy=True,
+        normalize_embeddings=True
+    )
 
-    X_num = np.empty((len(df_input), 0))
-    if numeric_features:
-        X_num_df = df_input.reindex(columns=numeric_features, fill_value=0).copy()
-        X_num_df = X_num_df.apply(pd.to_numeric, errors="coerce").fillna(0.0)
-
-        if scaler is not None:
-            X_num = scaler.transform(X_num_df)
-        else:
-            X_num = X_num_df.to_numpy(dtype=float)
-
+    # CATEGORICAL: match notebook
     X_cat = np.empty((len(df_input), 0))
     if categorical_features:
         X_cat_df = df_input.reindex(columns=categorical_features, fill_value="Unknown").copy()
         X_cat_df = X_cat_df.fillna("Unknown").astype(str)
 
+        if cat_imputer is not None:
+            X_cat_raw = cat_imputer.transform(X_cat_df)
+        else:
+            X_cat_raw = X_cat_df.values
+
         if ohe is not None:
-            X_cat = ohe.transform(X_cat_df)
+            X_cat = ohe.transform(X_cat_raw)
             if hasattr(X_cat, "toarray"):
                 X_cat = X_cat.toarray()
         else:
             X_cat = np.empty((len(df_input), 0))
 
-    X_parts = [arr for arr in [X_text, X_num, X_cat] if arr.shape[1] > 0]
+    # NUMERIC: match notebook
+    X_num = np.empty((len(df_input), 0))
+    if numeric_features:
+        X_num_df = df_input.reindex(columns=numeric_features, fill_value=0).copy()
+        X_num_df = X_num_df.apply(pd.to_numeric, errors="coerce")
+
+        if num_imputer is not None:
+            X_num_imputed = num_imputer.transform(X_num_df)
+        else:
+            X_num_imputed = X_num_df.fillna(0.0).to_numpy(dtype=float)
+
+        if scaler is not None:
+            X_num = scaler.transform(X_num_imputed)
+        else:
+            X_num = np.asarray(X_num_imputed, dtype=float)
+
+    X_parts = [arr for arr in [X_text, X_cat, X_num] if arr.shape[1] > 0]
     if not X_parts:
         raise ValueError("No features were generated for prediction.")
 
     X_final = np.hstack(X_parts)
-    return X_final, classifier
+
+    debug_info = {
+        "text_feature_name": text_feature,
+        "embedder_name": embedder_name,
+        "X_text_shape": X_text.shape,
+        "X_cat_shape": X_cat.shape,
+        "X_num_shape": X_num.shape,
+        "X_final_shape": X_final.shape,
+        "X_final_sum": float(np.sum(X_final)),
+        "X_final_mean": float(np.mean(X_final)),
+        "X_final_std": float(np.std(X_final)),
+    }
+
+    return X_final, classifier, debug_info
 
 
 def predict_paper(
     title: str,
-    abstract_or_text: str,
+    abstract_text: str,
     citation_count,
     publisher: str,
     institution_name: str,
@@ -482,11 +548,9 @@ def predict_paper(
     if missing_keys:
         raise ValueError(f"Model bundle is missing required keys: {missing_keys}")
 
-    combined_text = make_combined_text(title, abstract_or_text)
-
     df_input = prepare_single_input_dataframe(
         title=title,
-        combined_text=combined_text,
+        abstract_text=abstract_text,
         citation_count=citation_count,
         publisher=publisher,
         institution_name=institution_name,
@@ -497,12 +561,14 @@ def predict_paper(
         bundle=bundle,
     )
 
-    X_final, classifier = build_feature_matrix(df_input, bundle)
+    X_final, classifier, debug_info = build_feature_matrix(df_input, bundle)
+
     pred = classifier.predict(X_final)[0]
 
     confidence = None
     probabilities = None
     classifier_classes = None
+    decision_score = None
 
     if hasattr(classifier, "classes_"):
         classifier_classes = classifier.classes_
@@ -511,7 +577,14 @@ def predict_paper(
         probabilities = classifier.predict_proba(X_final)[0]
         confidence = float(np.max(probabilities))
 
-    return int(pred), confidence, combined_text, df_input, classifier_classes, probabilities
+    if hasattr(classifier, "decision_function"):
+        raw_decision = classifier.decision_function(X_final)
+        if isinstance(raw_decision, np.ndarray):
+            decision_score = raw_decision[0] if raw_decision.ndim == 1 else raw_decision.tolist()
+        else:
+            decision_score = raw_decision
+
+    return pred, confidence, df_input, classifier_classes, probabilities, debug_info, decision_score
 
 
 # =========================================================
@@ -552,10 +625,10 @@ with tab_home:
         st.subheader("How it works")
         st.markdown(
             """
-            1. Upload a paper PDF or paste paper text  
-            2. The system extracts text and derives document-level features  
+            1. Upload a paper PDF or paste abstract/text  
+            2. The system extracts abstract-like content and document-level features  
             3. Metadata is combined with these extracted features  
-            4. The trained model predicts whether the paper is likely 4★ or not 4★
+            4. The trained binary hybrid model predicts whether the paper is likely 4★ or not 4★
             """
         )
         st.markdown('</div>', unsafe_allow_html=True)
@@ -565,7 +638,7 @@ with tab_home:
         st.subheader("Current Model")
         st.write("**Binary classification:** 4★ vs Not 4★")
         st.write("**Focus:** UOA 11 — Computer Science and Informatics")
-        st.write("**Inference mode:** PDF/text + metadata + engineered document features")
+        st.write("**Target mapping:** 1 = 4★, 0 = Not 4★")
         st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -578,7 +651,7 @@ with tab_predict:
     left_col, right_col = st.columns(2)
 
     with left_col:
-        title = st.text_input("Paper Title", "")
+        title_input = st.text_input("Paper Title", "")
         uploaded_pdf = st.file_uploader("Upload Paper PDF (optional)", type=["pdf"])
         manual_text = st.text_area(
             "Abstract / Extracted Text / Key Paper Content",
@@ -605,38 +678,51 @@ with tab_predict:
             index=0
         )
 
-    text_for_prediction = manual_text
+    text_for_features = manual_text
+    abstract_for_model = manual_text
     detected_page_count = 0
+    final_title = title_input.strip()
 
     if uploaded_pdf is not None:
         with st.spinner("Reading PDF..."):
             pdf_text, detected_page_count = extract_pdf_text_and_pages(uploaded_pdf)
 
         if pdf_text.strip():
-            text_for_prediction = pdf_text
-            st.success("PDF text extracted and will be used for prediction.")
+            guessed_title, guessed_abstract = extract_title_and_abstract(pdf_text)
+
+            if not final_title and guessed_title:
+                final_title = guessed_title
+
+            if guessed_abstract:
+                abstract_for_model = guessed_abstract
+                text_for_features = pdf_text
+                st.success("PDF text extracted and abstract-style content will be used for prediction.")
+            else:
+                text_for_features = pdf_text
+                abstract_for_model = manual_text if manual_text.strip() else pdf_text[:3000]
+                st.warning("PDF abstract could not be isolated clearly. Fallback text will be used.")
         else:
             st.warning("PDF text could not be extracted. The manually entered text will be used instead.")
 
     predict_button = st.button("Predict")
 
     if predict_button:
-        if not title.strip():
-            st.error("Please enter the paper title.")
-        elif not text_for_prediction.strip():
+        if not final_title.strip():
+            st.error("Please enter the paper title, or upload a PDF with a readable first line/title.")
+        elif not abstract_for_model.strip():
             st.error("Please provide paper text or upload a readable PDF.")
         else:
             try:
                 engineered_features = build_engineered_features(
-                    raw_text=text_for_prediction,
+                    raw_text=text_for_features,
                     page_count=detected_page_count,
-                    title=title
+                    title=final_title
                 )
 
                 with st.spinner("Running prediction..."):
-                    pred, confidence, combined_text, debug_df, classifier_classes, probabilities = predict_paper(
-                        title=title,
-                        abstract_or_text=text_for_prediction,
+                    pred, confidence, debug_df, classifier_classes, probabilities, feature_debug, decision_score = predict_paper(
+                        title=final_title,
+                        abstract_text=abstract_for_model,
                         citation_count=citation_count,
                         publisher=publisher,
                         institution_name=institution_name,
@@ -649,8 +735,9 @@ with tab_predict:
                 st.markdown("---")
                 st.subheader("Prediction Result")
 
-                # Temporary current mapping
-                if pred == 1:
+                # Confirmed from notebook cell 103:
+                # is_4_star = (label == 4).astype(int)
+                if int(pred) == 1:
                     st.markdown(
                         '<div class="result-good">Predicted Class: 4★ Paper</div>',
                         unsafe_allow_html=True
@@ -668,11 +755,13 @@ with tab_predict:
                     st.write("Raw prediction:", pred)
                     st.write("Classifier classes:", classifier_classes)
                     st.write("Prediction probabilities:", probabilities)
+                    st.write("Decision score:", decision_score)
+                    st.json(feature_debug)
 
-                with st.expander("Show combined text used for prediction"):
-                    st.write(combined_text[:5000])
+                with st.expander("Show text used for model (abstract-style)"):
+                    st.write(abstract_for_model[:5000])
 
-                with st.expander("Show engineered features used for inference"):
+                with st.expander("Show input row used for inference"):
                     st.dataframe(debug_df.T)
 
             except Exception as e:
