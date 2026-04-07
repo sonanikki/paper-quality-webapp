@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import uuid
 import pickle
 import importlib
@@ -898,7 +899,8 @@ def predict_paper(
 # ASSISTANT UI
 # =========================================================
 def render_avatar_assistant(messages, title="Ava · App Guide", subtitle="Ask me about uploads, metadata, or demo tips."):
-    messages_js = str(messages).replace("'", "\\'")
+    messages_json = json.dumps(messages, ensure_ascii=False)
+
     html = f"""
     <html>
     <head>
@@ -1042,7 +1044,7 @@ def render_avatar_assistant(messages, title="Ava · App Guide", subtitle="Ask me
         </div>
 
         <script>
-            const messages = {messages};
+            const messages = {messages_json};
             const el = document.getElementById("assistantText");
             let idx = 0;
 
@@ -1106,7 +1108,7 @@ def local_app_help(question: str) -> str:
     if "ukprn" in q:
         return (
             "UKPRN is an institution identifier. In your current app logic, it stays as part of the model input "
-            "if the saved model expects it, even though it is not a naturally meaningful continuous number."
+            "if the saved model expects it."
         )
 
     if "demo" in q or "viva" in q or "presentation" in q:
@@ -1153,8 +1155,6 @@ Session ID: {st.session_state['assistant_session_id']}
         "instructions": APP_ASSISTANT_SYSTEM_PROMPT,
         "input": f"{app_context}\nUser question: {question}",
         "max_output_tokens": 260,
-        "temperature": 0.3,
-        "safety_identifier": st.session_state["assistant_session_id"],
     }
 
     previous_response_id = st.session_state.get("assistant_previous_response_id")
@@ -1199,6 +1199,16 @@ def reset_assistant_chat():
     st.session_state["assistant_previous_response_id"] = None
 
 
+def handle_assistant_prompt(prompt: str, current_page: str, model_exists: bool, lookup_exists: bool):
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return
+
+    st.session_state["helper_messages"].append({"role": "user", "content": prompt})
+    answer = respond_from_assistant(prompt, current_page, model_exists, lookup_exists)
+    st.session_state["helper_messages"].append({"role": "assistant", "content": answer})
+
+
 def render_help_chat(current_page: str, model_exists: bool, lookup_exists: bool):
     st.markdown("<div class='section-card'>", unsafe_allow_html=True)
     st.subheader("Ask the App Assistant")
@@ -1208,10 +1218,7 @@ def render_help_chat(current_page: str, model_exists: bool, lookup_exists: bool)
 
     c1, c2 = st.columns([1, 1])
     with c1:
-        st.checkbox(
-            "Use GPT helper when available",
-            key="use_gpt_helper"
-        )
+        st.checkbox("Use GPT helper when available", key="use_gpt_helper")
     with c2:
         if st.button("Clear assistant chat", key=f"clear_chat_{current_page}"):
             reset_assistant_chat()
@@ -1220,34 +1227,36 @@ def render_help_chat(current_page: str, model_exists: bool, lookup_exists: bool)
     st.write("Quick help prompts:")
     q1, q2, q3, q4 = st.columns(4)
 
-    prompt = None
     if q1.button("How do I use the app?", key=f"q1_{current_page}"):
-        prompt = "How do I use this app?"
+        handle_assistant_prompt("How do I use this app?", current_page, model_exists, lookup_exists)
+        st.rerun()
+
     if q2.button("Why is metadata needed?", key=f"q2_{current_page}"):
-        prompt = "Why is metadata needed?"
+        handle_assistant_prompt("Why is metadata needed?", current_page, model_exists, lookup_exists)
+        st.rerun()
+
     if q3.button("What is a known paper?", key=f"q3_{current_page}"):
-        prompt = "What is a known paper?"
+        handle_assistant_prompt("What is a known paper?", current_page, model_exists, lookup_exists)
+        st.rerun()
+
     if q4.button("How should I demo this?", key=f"q4_{current_page}"):
-        prompt = "How should I demo this app in my viva?"
-
-    user_prompt = st.chat_input(
-        "Ask about the app, metadata, prediction flow, or demo tips...",
-        key=f"chat_input_{current_page}"
-    )
-
-    if user_prompt:
-        prompt = user_prompt
-
-    if prompt:
-        st.session_state["helper_messages"].append({"role": "user", "content": prompt})
-        with st.spinner("Assistant is thinking..."):
-            answer = respond_from_assistant(prompt, current_page, model_exists, lookup_exists)
-        st.session_state["helper_messages"].append({"role": "assistant", "content": answer})
+        handle_assistant_prompt("How should I demo this app in my viva?", current_page, model_exists, lookup_exists)
         st.rerun()
 
     for msg in st.session_state["helper_messages"]:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+
+    with st.form(key=f"assistant_form_{current_page}", clear_on_submit=True):
+        typed_prompt = st.text_input(
+            "Type your question here",
+            placeholder="Ask about the app, metadata, prediction flow, or demo tips..."
+        )
+        submitted = st.form_submit_button("Send")
+
+    if submitted and typed_prompt.strip():
+        handle_assistant_prompt(typed_prompt, current_page, model_exists, lookup_exists)
+        st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
