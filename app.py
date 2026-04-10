@@ -412,7 +412,7 @@ def gpt_helper_ready() -> bool:
 # =========================================================
 def check_runtime_dependencies():
     results = {}
-    package_names = ["sklearn", "pypdf", "sentence_transformers", "torch"]
+    package_names = ["sklearn", "pypdf", "sentence_transformers", "torch", "openai"]
 
     for pkg in package_names:
         try:
@@ -422,9 +422,7 @@ def check_runtime_dependencies():
         except Exception as e:
             results[pkg] = f"ERROR: {e}"
 
-    results["openai"] = "OK" if OPENAI_AVAILABLE else "Not installed"
     results["gpt_helper_configured"] = "Yes" if gpt_helper_ready() else "No"
-
     return results
 
 
@@ -436,17 +434,15 @@ def load_model_bundle():
     if not os.path.exists(MODEL_PATH):
         raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
 
-    try:
-        with open(MODEL_PATH, "rb") as f:
-            bundle = pickle.load(f)
-        return bundle
-    except Exception as e:
-        raise RuntimeError(f"Failed to load model bundle: {e}")
+    with open(MODEL_PATH, "rb") as f:
+        bundle = pickle.load(f)
+    return bundle
 
 
 @st.cache_resource
 def load_embedder(embedder_name: str):
     from sentence_transformers import SentenceTransformer
+ sentence_transformers import SentenceTransformer
     return SentenceTransformer(embedder_name)
 
 
@@ -523,7 +519,7 @@ def extract_pdf_text_and_pages(uploaded_file):
             except Exception:
                 continue
 
-        return "\\n".join(pages).strip(), page_count
+        return "\n".join(pages).strip(), page_count
 
     except ModuleNotFoundError as e:
         st.error(f"PDF reading dependency is missing in the deployed environment: {e}")
@@ -542,7 +538,7 @@ def extract_title_and_abstract(text: str):
 
     abstract = ""
     m = re.search(
-        r"abstract\\s*(.*?)(introduction|keywords|\\n\\n)",
+        r"abstract\s*(.*?)(introduction|keywords|\n\n)",
         text,
         re.IGNORECASE | re.DOTALL,
     )
@@ -576,47 +572,47 @@ ACADEMIC_WORDS = {
 }
 
 SECTION_PATTERNS = {
-    "abstract_present": r"\\babstract\\b",
-    "introduction_present": r"\\bintroduction\\b",
+    "abstract_present": r"\babstract\b",
+    "introduction_present": r"\bintroduction\b",
     "literature_review_present": r"(literature review|related work|background)",
     "methodology_present": r"(methodology|methods|materials and methods|approach)",
-    "results_present": r"\\bresults?\\b",
-    "discussion_present": r"\\bdiscussion\\b",
+    "results_present": r"\bresults?\b",
+    "discussion_present": r"\bdiscussion\b",
     "conclusion_present": r"(conclusion|conclusions|concluding remarks)",
     "references_present": r"(references|bibliography)",
 }
 
 COUNT_PATTERNS = {
-    "experiment_mentions": r"\\bexperiment(s)?\\b",
-    "dataset_mentions": r"\\bdataset(s)?\\b",
-    "evaluation_mentions": r"\\bevaluation\\b",
-    "validation_mentions": r"\\bvalidation\\b",
-    "benchmark_mentions": r"\\bbenchmark(s)?\\b",
-    "statistical_terms_count": r"\\b(statistical|regression|anova|variance|significant)\\b",
-    "p_value_mentions": r"\\bp\\s*[<=>]\\s*0\\.\\d+|\\bp-value\\b",
-    "confidence_interval_mentions": r"\\bconfidence interval(s)?\\b|\\bCI\\b",
-    "ablation_mentions": r"\\bablation\\b",
-    "baseline_mentions": r"\\bbaseline(s)?\\b",
-    "reproducibility_terms_count": r"\\b(reproducibility|reproducible|replication|replicable)\\b",
-    "theorem_count": r"\\btheorem(s)?\\b",
-    "lemma_count": r"\\blemma(s)?\\b",
-    "proof_count": r"\\bproof(s)?\\b",
-    "proposition_count": r"\\bproposition(s)?\\b",
-    "corollary_count": r"\\bcorollary\\b",
-    "algorithm_count": r"\\balgorithm(s)?\\b",
-    "complexity_mentions": r"\\bcomplexity\\b|\\bo\\([n0-9log\\+\\-\\*\\/\\^\\s]+\\)",
-    "formal_definition_count": r"\\bdefinition(s)?\\b",
-    "novelty_keywords_count": r"\\bnovel|new|original|innovative|proposed\\b",
-    "research_gap_mentions": r"\\b(gap in the literature|research gap|existing gap)\\b",
-    "new_method_mentions": r"\\bproposed method|new method|novel method\\b",
-    "future_work_mentions": r"\\bfuture work\\b",
-    "contribution_mentions": r"\\bcontribution(s)?\\b",
-    "sample_size_mentions": r"\\bsample size\\b|\\bn\\s*=\\s*\\d+\\b",
-    "survey_mentions": r"\\bsurvey(s)?\\b",
-    "interview_mentions": r"\\binterview(s)?\\b",
-    "case_study_mentions": r"\\bcase study|case studies\\b",
-    "fieldwork_mentions": r"\\bfieldwork\\b",
-    "real_world_mentions": r"\\breal[- ]world\\b",
+    "experiment_mentions": r"\bexperiment(s)?\b",
+    "dataset_mentions": r"\bdataset(s)?\b",
+    "evaluation_mentions": r"\bevaluation\b",
+    "validation_mentions": r"\bvalidation\b",
+    "benchmark_mentions": r"\bbenchmark(s)?\b",
+    "statistical_terms_count": r"\b(statistical|regression|anova|variance|significant)\b",
+    "p_value_mentions": r"\bp\s*[<=>]\s*0\.\d+|\bp-value\b",
+    "confidence_interval_mentions": r"\bconfidence interval(s)?\b|\bCI\b",
+    "ablation_mentions": r"\bablation\b",
+    "baseline_mentions": r"\bbaseline(s)?\b",
+    "reproducibility_terms_count": r"\b(reproducibility|reproducible|replication|replicable)\b",
+    "theorem_count": r"\btheorem(s)?\b",
+    "lemma_count": r"\blemma(s)?\b",
+    "proof_count": r"\bproof(s)?\b",
+    "proposition_count": r"\bproposition(s)?\b",
+    "corollary_count": r"\bcorollary\b",
+    "algorithm_count": r"\balgorithm(s)?\b",
+    "complexity_mentions": r"\bcomplexity\b|\bo\([n0-9log\+\-\*\/\^\s]+\)",
+    "formal_definition_count": r"\bdefinition(s)?\b",
+    "novelty_keywords_count": r"\bnovel|new|original|innovative|proposed\b",
+    "research_gap_mentions": r"\b(gap in the literature|research gap|existing gap)\b",
+    "new_method_mentions": r"\bproposed method|new method|novel method\b",
+    "future_work_mentions": r"\bfuture work\b",
+    "contribution_mentions": r"\bcontribution(s)?\b",
+    "sample_size_mentions": r"\bsample size\b|\bn\s*=\s*\d+\b",
+    "survey_mentions": r"\bsurvey(s)?\b",
+    "interview_mentions": r"\binterview(s)?\b",
+    "case_study_mentions": r"\bcase study|case studies\b",
+    "fieldwork_mentions": r"\bfieldwork\b",
+    "real_world_mentions": r"\breal[- ]world\b",
 }
 
 
@@ -666,7 +662,7 @@ def binary_present(pattern: str, text: str) -> int:
 
 
 def passive_voice_ratio(text: str) -> float:
-    matches = re.findall(r"\\b(is|are|was|were|been|be|being)\\s+\\w+ed\\b", text.lower())
+    matches = re.findall(r"\b(is|are|was|were|been|be|being)\s+\w+ed\b", text.lower())
     sentences = split_sentences(text)
     if not sentences:
         return 0.0
@@ -676,24 +672,24 @@ def passive_voice_ratio(text: str) -> float:
 def punctuation_density(text: str) -> float:
     if not text:
         return 0.0
-    punct = len(re.findall(r"[,\\.;:!?()\\[\\]{}\\-]", text))
+    punct = len(re.findall(r"[,\.;:!?()\[\]{}\-]", text))
     return punct / max(len(text), 1)
 
 
 def github_link_present(text: str) -> int:
-    return int(bool(re.search(r"github\\.com", text, flags=re.IGNORECASE)))
+    return int(bool(re.search(r"github\.com", text, flags=re.IGNORECASE)))
 
 
 def code_link_present(text: str) -> int:
-    return int(bool(re.search(r"(github\\.com|gitlab\\.com|bitbucket\\.org|code available|source code)", text, flags=re.IGNORECASE)))
+    return int(bool(re.search(r"(github\.com|gitlab\.com|bitbucket\.org|code available|source code)", text, flags=re.IGNORECASE)))
 
 
 def pseudocode_present(text: str) -> int:
-    return int(bool(re.search(r"\\bpseudocode\\b", text, flags=re.IGNORECASE)))
+    return int(bool(re.search(r"\bpseudocode\b", text, flags=re.IGNORECASE)))
 
 
 def formula_density(text: str) -> float:
-    formulas = len(re.findall(r"[=+\\-/*^<>≤≥∑∫λμσπ]", text))
+    formulas = len(re.findall(r"[=+\-/*^<>≤≥∑∫λμσπ]", text))
     words = len(tokenize_words(text))
     return formulas / max(words, 1)
 
@@ -740,7 +736,7 @@ def build_engineered_features(raw_text: str, page_count: int, title: str):
         "pdf_found": int(page_count > 0),
         "page_count": page_count,
         "abstract_text": text[:3000],
-        "abstract_present": binary_present(r"\\babstract\\b", text),
+        "abstract_present": binary_present(r"\babstract\b", text),
         "word_count": word_count,
         "unique_word_count": unique_word_count,
         "vocabulary_richness": vocabulary_richness(text),
@@ -766,7 +762,7 @@ def build_engineered_features(raw_text: str, page_count: int, title: str):
     for feature_name, pattern in COUNT_PATTERNS.items():
         features[feature_name] = count_matches(pattern, text)
 
-    features["limitation_discussion_presence"] = binary_present(r"\\blimitation(s)?\\b", text)
+    features["limitation_discussion_presence"] = binary_present(r"\blimitation(s)?\b", text)
 
     return features
 
@@ -1180,7 +1176,7 @@ Session ID: {st.session_state['assistant_session_id']}
     kwargs = {
         "model": model_name,
         "instructions": APP_ASSISTANT_SYSTEM_PROMPT,
-        "input": f"{app_context}\\nUser question: {question}",
+        "input": f"{app_context}\nUser question: {question}",
         "max_output_tokens": 260,
     }
 
@@ -1203,11 +1199,12 @@ def respond_from_assistant(question: str, current_page: str, model_exists: bool,
     if st.session_state.get("use_gpt_helper", True) and gpt_helper_ready():
         try:
             return ask_gpt_helper(question, current_page, model_exists, lookup_exists)
-        except Exception:
+        except Exception as e:
+            st.error(f"GPT helper runtime error: {e}")
             fallback = local_app_help(question)
             return (
                 fallback
-                + "\\n\\n_(The GPT helper was unavailable just now, so I answered using the built-in app guide.)_"
+                + "\n\n_(The GPT helper was unavailable just now, so I answered using the built-in app guide.)_"
             )
 
     return local_app_help(question)
