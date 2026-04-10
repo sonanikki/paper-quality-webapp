@@ -38,13 +38,18 @@ You are a friendly in-app assistant for a Streamlit application called
 
 Your job is ONLY to help users with:
 - how to use the app
-- what known paper mode means
-- what new paper mode means
-- why metadata is needed
+- what prepared paper mode means
+- why metadata is needed in this project
 - what 4★ vs Not 4★ means in this project
 - what citation count / publisher / institution / open access fields are for
 - basic demo or viva guidance
-- how PDF upload and metadata lookup work
+- how PDF upload and matching work
+
+Important:
+- This demo build supports prepared papers only.
+- If the user asks about random unseen papers, explain that this live demo is intentionally limited
+  to prepared papers for stable demonstration.
+- Do not discuss internal file names or implementation details unless explicitly asked.
 
 Do NOT answer unrelated general knowledge questions in depth.
 If the user asks something outside the app's scope, politely redirect them
@@ -62,8 +67,8 @@ if "helper_messages" not in st.session_state:
         {
             "role": "assistant",
             "content": (
-                "Hello — I’m your app guide. Ask me how to use the system, "
-                "what metadata means, or how to present the app in your demo."
+                "Hello — I’m your app guide. This demo currently supports prepared papers only. "
+                "Ask me how to use the system or how to present it in your demo."
             ),
         }
     ]
@@ -364,6 +369,18 @@ def safe_int(value, default=0):
         return default
 
 
+def safe_text(value, default="Unknown"):
+    if value is None:
+        return default
+    try:
+        if pd.isna(value):
+            return default
+    except Exception:
+        pass
+    text = str(value).strip()
+    return text if text else default
+
+
 def clean_text(text: str) -> str:
     if not text:
         return ""
@@ -437,7 +454,7 @@ def load_embedder(embedder_name: str):
 
 
 @st.cache_data
-def load_metadata_lookup():
+def load_reference_records():
     if not os.path.exists(LOOKUP_PATH):
         return pd.DataFrame()
 
@@ -451,17 +468,17 @@ def load_metadata_lookup():
 
 
 # =========================================================
-# LOOKUP MATCHING
+# MATCHING
 # =========================================================
-def find_metadata_match(title: str, uploaded_filename: str, lookup_df: pd.DataFrame):
-    if lookup_df.empty:
+def find_prepared_paper(title: str, uploaded_filename: str, reference_df: pd.DataFrame):
+    if reference_df.empty:
         return None
 
     norm_title = normalize_text(title)
     norm_file = normalize_filename(uploaded_filename)
     paper_id = extract_paper_id(uploaded_filename)
 
-    temp = lookup_df.copy()
+    temp = reference_df.copy()
 
     if "paper_id" in temp.columns:
         temp["_paper_id"] = temp["paper_id"].astype(str).str.upper().str.strip()
@@ -933,7 +950,7 @@ def predict_paper(
 # =========================================================
 # ASSISTANT UI
 # =========================================================
-def render_avatar_assistant(messages, title="Ava · App Guide", subtitle="Ask me about uploads, metadata, or demo tips."):
+def render_avatar_assistant(messages, title="Ava · App Guide", subtitle="Ask me about uploads, matching, or demo tips."):
     messages_json = json.dumps(messages, ensure_ascii=False)
 
     html = f"""
@@ -1109,29 +1126,27 @@ def local_app_help(question: str) -> str:
 
     if any(x in q for x in ["how do i use", "how to use", "how can i use", "start", "begin", "upload"]):
         return (
-            "Go to the Predict page, enter a title or upload a PDF, review the extracted text, "
-            "confirm the metadata on the right, and then click Run Prediction."
+            "Go to the Predict page and upload one of the prepared demonstration papers. "
+            "If the paper is recognized, the app will load its stored context and let you run prediction."
         )
 
-    if "known paper" in q or "lookup" in q or "metadata match" in q:
+    if "prepared paper" in q or "known paper" in q or "match" in q:
         return (
-            "A known paper is one that already exists in your prepared dataset. "
-            "The app tries to match it using paper ID, normalized filename, or title, "
-            "then loads metadata automatically from metadata_lookup.csv."
+            "A prepared paper is one that the demo already recognizes. "
+            "The app checks the uploaded file against the prepared demonstration set and only runs prediction when it finds a valid match."
         )
 
-    if "new paper" in q or "manual metadata" in q or "unseen" in q:
+    if "new paper" in q or "random pdf" in q or "unseen" in q:
         return (
-            "A new paper is not found in the lookup file. The app can still extract text from the PDF, "
-            "but you should manually complete metadata such as citation count, institution, publisher, "
-            "open access status, and year for the best result."
+            "This demo build is intentionally limited to prepared papers only. "
+            "That keeps the live presentation stable and consistent."
         )
 
     if "metadata" in q or "citation" in q or "publisher" in q or "institution" in q or "open access" in q:
         return (
             "Metadata gives the hybrid model extra context beyond the paper text. "
             "In this project, fields like citation count, publisher, institution, main panel, "
-            "UOA name, open access status, and year can all support the prediction."
+            "UOA name, open access status, and year all contribute to the final prediction."
         )
 
     if "4★" in question or "4 star" in q or "not 4" in q:
@@ -1140,29 +1155,20 @@ def local_app_help(question: str) -> str:
             "4★ or Not 4★ within the current project framing for UOA 11."
         )
 
-    if "ukprn" in q:
-        return (
-            "UKPRN is an institution identifier. In your current app logic, it stays as part of the model input "
-            "if the saved model expects it."
-        )
-
     if "demo" in q or "viva" in q or "presentation" in q:
         return (
-            "For the best demo, start with a known paper so the metadata loads automatically. "
-            "Then explain that new papers may require manual metadata because a hybrid model needs more "
-            "than PDF text alone."
+            "For the best demo, upload one of the prepared papers first. "
+            "That gives the strongest and most stable demonstration of the system."
         )
 
     if "pdf" in q or "abstract" in q or "text extraction" in q:
         return (
-            "When you upload a PDF, the app tries to extract page text, guess the title, and isolate abstract-style content. "
-            "If extraction is weak, the manually entered text becomes the fallback."
+            "When you upload a PDF, the app extracts page text, guesses the title, and isolates abstract-style content where possible before prediction."
         )
 
     return (
-        "I can help with using the app, metadata fields, known paper matching, new paper workflow, "
-        "PDF extraction, and demo tips. Try asking something like: "
-        "'How do I use this app?' or 'Why is metadata needed?'"
+        "I can help with using the app, prepared paper matching, metadata meaning, prediction flow, and demo tips. "
+        "Try asking something like: 'How do I use this app?' or 'Why is metadata needed?'"
     )
 
 
@@ -1181,8 +1187,9 @@ def ask_gpt_helper(question: str, current_page: str, model_exists: bool, lookup_
     app_context = f"""
 Current page: {current_page}
 Model file present: {'Yes' if model_exists else 'No'}
-Metadata lookup present: {'Yes' if lookup_exists else 'No'}
+Reference set present: {'Yes' if lookup_exists else 'No'}
 Session ID: {st.session_state['assistant_session_id']}
+Demo mode: prepared papers only
 """
 
     kwargs = {
@@ -1226,8 +1233,8 @@ def reset_assistant_chat():
         {
             "role": "assistant",
             "content": (
-                "Hello — I’m your app guide. Ask me how to use the system, "
-                "what metadata means, or how to present the app in your demo."
+                "Hello — I’m your app guide. This demo currently supports prepared papers only. "
+                "Ask me how to use the system or how to present it in your demo."
             ),
         }
     ]
@@ -1270,8 +1277,8 @@ def render_help_chat(current_page: str, model_exists: bool, lookup_exists: bool)
         handle_assistant_prompt("Why is metadata needed?", current_page, model_exists, lookup_exists)
         st.rerun()
 
-    if q3.button("What is a known paper?", key=f"q3_{current_page}"):
-        handle_assistant_prompt("What is a known paper?", current_page, model_exists, lookup_exists)
+    if q3.button("What is a prepared paper?", key=f"q3_{current_page}"):
+        handle_assistant_prompt("What is a prepared paper?", current_page, model_exists, lookup_exists)
         st.rerun()
 
     if q4.button("How should I demo this?", key=f"q4_{current_page}"):
@@ -1317,9 +1324,9 @@ else:
     st.sidebar.error("Model file missing")
 
 if lookup_exists:
-    st.sidebar.success("Metadata lookup detected")
+    st.sidebar.success("Prepared paper reference detected")
 else:
-    st.sidebar.warning("Metadata lookup missing")
+    st.sidebar.warning("Prepared paper reference missing")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("## Assistant Status")
@@ -1330,10 +1337,9 @@ else:
     st.sidebar.info("GPT helper not configured")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("## Quick Notes")
+st.sidebar.markdown("## Demo Mode")
 st.sidebar.info(
-    "Known papers can be matched automatically using paper ID, filename, or title. "
-    "New papers can still be predicted by entering metadata manually."
+    "This live demo currently supports prepared papers only for stable presentation."
 )
 
 
@@ -1347,7 +1353,7 @@ if page == "Home":
         <div class="hero-title">Research Paper Quality Prediction System</div>
         <div class="hero-subtitle">
             A hybrid web application for predicting whether an individual research paper is likely to be
-            <b>4★</b> or <b>Not 4★</b>, using textual content, engineered PDF-based indicators, and metadata features.
+            <b>4★</b> or <b>Not 4★</b>, using textual content, engineered PDF-based indicators, and project metadata.
         </div>
     </div>
     """,
@@ -1356,9 +1362,9 @@ if page == "Home":
 
     render_avatar_assistant(
         messages=[
-            "Welcome! I can guide you through the paper prediction workflow.",
-            "Upload a known paper to auto-load metadata from the lookup file.",
-            "For new papers, I’ll help you understand which metadata fields to fill in.",
+            "Welcome! I can guide you through the prediction workflow.",
+            "This live demo is configured for prepared papers only.",
+            "That keeps the presentation stable, fast, and consistent.",
             "Use the help chat below if you have any doubts about the app or demo.",
         ],
         title="Ava · Welcome Guide",
@@ -1390,8 +1396,8 @@ if page == "Home":
         st.markdown(
             """
         <div class="stat-card">
-            <div class="stat-value">4★ vs Not 4★</div>
-            <div class="stat-label">Prediction Target</div>
+            <div class="stat-value">Prepared Demo</div>
+            <div class="stat-label">Live Presentation Mode</div>
         </div>
         """,
             unsafe_allow_html=True,
@@ -1405,8 +1411,8 @@ if page == "Home":
         "to produce a classification result."
     )
     st.write(
-        "For known papers already prepared in the dataset, the application can automatically load metadata "
-        "from the lookup file. For new papers, the same workflow can still be used with manual metadata completion."
+        "For this live demo, the application is intentionally restricted to prepared papers only. "
+        "That keeps the workflow reliable and presentation-ready."
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1416,10 +1422,10 @@ if page == "Home":
         st.markdown(
             """
         <div class="mini-card">
-            <div class="soft-heading">Known Paper Mode</div>
+            <div class="soft-heading">Prepared Paper Mode</div>
             <div class="small-muted">
-                Upload a paper that already belongs to the prepared dataset. The application attempts to match
-                the paper using paper ID, normalized filename, or title, and then auto-loads the corresponding metadata.
+                Upload one of the prepared demonstration papers. The application checks the uploaded paper,
+                loads its stored context, and runs the hybrid prediction pipeline.
             </div>
         </div>
         """,
@@ -1430,10 +1436,10 @@ if page == "Home":
         st.markdown(
             """
         <div class="mini-card">
-            <div class="soft-heading">New Paper Mode</div>
+            <div class="soft-heading">Why this demo mode?</div>
             <div class="small-muted">
-                Upload a completely new paper and the application will still extract text and generate structural
-                features. Missing metadata can then be entered manually before running prediction.
+                This version is intentionally limited for a stable live presentation. It helps ensure
+                predictable behaviour during the demo and viva.
             </div>
         </div>
         """,
@@ -1442,12 +1448,11 @@ if page == "Home":
 
     st.markdown("<div class='section-card'>", unsafe_allow_html=True)
     st.markdown("<div class='soft-heading'>Workflow</div>", unsafe_allow_html=True)
-    st.write("1. Enter title or upload a PDF")
+    st.write("1. Upload a prepared paper PDF")
     st.write("2. Extract paper text and abstract-style content")
-    st.write("3. Attempt metadata lookup")
-    st.write("4. Review or complete metadata")
-    st.write("5. Generate engineered features")
-    st.write("6. Run the hybrid prediction model")
+    st.write("3. Confirm a valid prepared-paper match")
+    st.write("4. Run the hybrid prediction model")
+    st.write("5. Review the result and supporting details")
     st.markdown("</div>", unsafe_allow_html=True)
 
     render_help_chat("Home", model_exists, lookup_exists)
@@ -1462,8 +1467,8 @@ elif page == "Predict":
     <div class="hero-box">
         <div class="hero-title">Prediction Workspace</div>
         <div class="hero-subtitle">
-            Upload a research paper PDF, review the extracted paper information, confirm metadata,
-            and run the hybrid model to predict whether the paper is likely to be 4★ or Not 4★.
+            Upload a prepared research paper PDF, review the extracted paper information,
+            confirm the prepared-paper match, and run the hybrid model.
         </div>
     </div>
     """,
@@ -1472,243 +1477,164 @@ elif page == "Predict":
 
     render_avatar_assistant(
         messages=[
-            "Start by entering a title or uploading a PDF.",
-            "I’ll help the app identify known papers through metadata lookup.",
-            "Check the metadata carefully before running prediction.",
-            "Use the help chat below if you want demo tips or explanations.",
+            "Upload one of the prepared demonstration papers.",
+            "The app will first verify that the paper is recognized.",
+            "Only recognized prepared papers can proceed to prediction in this demo build.",
+            "Use the help chat below for explanation or demo tips.",
         ],
         title="Ava · Prediction Guide",
         subtitle="Helping you through the prediction process",
     )
 
-    lookup_df = load_metadata_lookup()
+    reference_df = load_reference_records()
 
     top_left, top_right = st.columns([1.4, 1])
 
     with top_left:
         st.markdown("<div class='section-card'>", unsafe_allow_html=True)
         st.subheader("Paper Input")
-        title_input = st.text_input("Paper Title", "")
-        uploaded_pdf = st.file_uploader("Upload Paper PDF (optional)", type=["pdf"])
-        manual_text = st.text_area(
-            "Abstract / Extracted Text / Key Paper Content",
-            height=240,
-            placeholder="Paste abstract or important paper text here...",
-        )
+        uploaded_pdf = st.file_uploader("Upload Prepared Paper PDF", type=["pdf"])
         st.markdown("</div>", unsafe_allow_html=True)
 
     with top_right:
         st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Input Guidance")
+        st.subheader("Demo Guidance")
         st.markdown(
             """
         <div class="glass-note">
-            <b>Best results:</b><br>
-            • upload a readable PDF for known papers<br>
-            • keep the title accurate<br>
-            • confirm the metadata fields before prediction<br>
-            • use manual text when PDF extraction is weak
+            <b>This live demo supports prepared papers only.</b><br>
+            • upload one of the prepared demonstration PDFs<br>
+            • random external PDFs are intentionally blocked in this version<br>
+            • this keeps the presentation stable and consistent
         </div>
         """,
             unsafe_allow_html=True,
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    text_for_features = manual_text
-    abstract_for_model = manual_text
-    detected_page_count = 0
-    final_title = title_input.strip()
-    uploaded_filename = uploaded_pdf.name if uploaded_pdf is not None else ""
-
-    if uploaded_pdf is not None:
+    if uploaded_pdf is None:
+        st.info("Upload a prepared paper PDF to begin.")
+    else:
         with st.spinner("Reading PDF..."):
             pdf_text, detected_page_count = extract_pdf_text_and_pages(uploaded_pdf)
 
-        if pdf_text.strip():
-            guessed_title, guessed_abstract = extract_title_and_abstract(pdf_text)
+        guessed_title, guessed_abstract = extract_title_and_abstract(pdf_text)
+        final_title = guessed_title.strip()
+        uploaded_filename = uploaded_pdf.name
 
-            if not final_title and guessed_title:
-                final_title = guessed_title
+        matched_metadata = find_prepared_paper(final_title, uploaded_filename, reference_df)
 
-            if guessed_abstract:
-                abstract_for_model = guessed_abstract
-                text_for_features = pdf_text
-                st.markdown(
-                    '<div class="status-good">PDF text extracted successfully. Abstract-style content will be used for prediction.</div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                text_for_features = pdf_text
-                abstract_for_model = manual_text if manual_text.strip() else pdf_text[:3000]
-                st.markdown(
-                    '<div class="status-warn">PDF text was extracted, but the abstract could not be isolated clearly. Fallback text will be used.</div>',
-                    unsafe_allow_html=True,
-                )
+        if matched_metadata:
+            st.markdown(
+                '<div class="status-good">Prepared paper recognized successfully. Prediction is available for this file.</div>',
+                unsafe_allow_html=True,
+            )
         else:
             st.markdown(
-                '<div class="status-warn">PDF text could not be extracted. The manually entered text will be used instead.</div>',
+                '<div class="status-warn">This PDF is not part of the prepared demonstration set. In this live demo, prediction is available only for prepared papers.</div>',
                 unsafe_allow_html=True,
             )
 
-    matched_metadata = find_metadata_match(final_title, uploaded_filename, lookup_df)
+        metric_1, metric_2, metric_3 = st.columns(3)
+        with metric_1:
+            st.metric("Detected Pages", detected_page_count)
+        with metric_2:
+            st.metric("PDF Uploaded", "Yes")
+        with metric_3:
+            st.metric("Prepared Match", "Yes" if matched_metadata else "No")
 
-    if matched_metadata:
-        st.markdown(
-            '<div class="status-good">Known paper matched in metadata lookup. Stored metadata has been loaded automatically.</div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            '<div class="status-info">No lookup match was found. Please enter metadata manually for the best possible prediction.</div>',
-            unsafe_allow_html=True,
-        )
+        left_col, right_col = st.columns([1.1, 1])
 
-    metric_1, metric_2, metric_3 = st.columns(3)
-    with metric_1:
-        st.metric("Detected Pages", detected_page_count)
-    with metric_2:
-        st.metric("PDF Uploaded", "Yes" if uploaded_pdf is not None else "No")
-    with metric_3:
-        st.metric("Metadata Match", "Yes" if matched_metadata else "No")
-
-    left_col, right_col = st.columns([1.1, 1])
-
-    with left_col:
-        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Extracted Paper Information")
-
-        if final_title:
-            st.write(f"**Final title used:** {final_title}")
-        else:
-            st.write("**Final title used:** Not available yet")
-
-        if uploaded_filename:
+        with left_col:
+            st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+            st.subheader("Extracted Paper Information")
             st.write(f"**Uploaded file:** {uploaded_filename}")
+            st.write(f"**Detected title:** {final_title if final_title else 'Not clearly detected'}")
+            preview_text = clean_text(guessed_abstract or pdf_text)[:1200]
+            if preview_text:
+                st.text_area("Text preview used for model input", preview_text, height=220, disabled=True)
+            else:
+                st.info("No readable paper text is currently available.")
+            st.markdown("</div>", unsafe_allow_html=True)
 
-        preview_text = clean_text(abstract_for_model)[:1200]
-        if preview_text:
-            st.text_area("Text preview used for model input", preview_text, height=220, disabled=True)
-        else:
-            st.info("No paper text is currently available.")
-        st.markdown("</div>", unsafe_allow_html=True)
+        with right_col:
+            st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+            st.subheader("Prepared Paper Summary")
 
-    with right_col:
-        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Metadata")
+            if matched_metadata:
+                st.write(f"**Title:** {safe_text(matched_metadata.get('Title'), 'Not available')}")
+                st.write(f"**Paper ID:** {safe_text(matched_metadata.get('paper_id'), 'Not available')}")
+                st.write(f"**Publisher:** {safe_text(matched_metadata.get('Publisher'), 'Not available')}")
+                st.write(f"**Institution:** {safe_text(matched_metadata.get('Institution name'), 'Not available')}")
+                st.write(f"**Year:** {safe_text(matched_metadata.get('Year'), 'Not available')}")
+                st.write(f"**Citation Count:** {safe_text(matched_metadata.get('Citation count'), 'Not available')}")
+            else:
+                st.info("No prepared-paper record was found for this uploaded PDF.")
+            st.markdown("</div>", unsafe_allow_html=True)
 
-        default_citation = matched_metadata.get("Citation count", 0) if matched_metadata else 0
-        default_publisher = matched_metadata.get("Publisher", "Unknown") if matched_metadata else "Unknown"
-        default_institution = matched_metadata.get("Institution name", "Unknown") if matched_metadata else "Unknown"
-        default_ukprn = matched_metadata.get("Institution UKPRN code", 0) if matched_metadata else 0
-        default_main_panel = matched_metadata.get("Main panel", "B") if matched_metadata else "B"
-        default_uoa = (
-            matched_metadata.get("Unit of assessment name", "Computer Science and Informatics")
-            if matched_metadata
-            else "Computer Science and Informatics"
-        )
-        default_oa = matched_metadata.get("Open access status", "Unknown") if matched_metadata else "Unknown"
-        default_year = matched_metadata.get("Year", 0) if matched_metadata else 0
-
-        citation_count = st.number_input(
-            "Citation Count",
-            min_value=0.0,
-            value=float(safe_float(default_citation, 0)),
-            step=1.0,
-        )
-        publisher = st.text_input("Publisher", str(default_publisher))
-        institution_name = st.text_input("Institution Name", str(default_institution))
-        institution_ukprn_code = st.text_input("Institution UKPRN Code", str(default_ukprn))
-        main_panel = st.text_input("Main Panel", str(default_main_panel))
-        uoa_name = st.text_input("Unit of Assessment Name", str(default_uoa))
-        year = st.number_input(
-            "Year",
-            min_value=0,
-            max_value=2100,
-            value=safe_int(default_year, 0),
-            step=1,
-        )
-
-        oa_options = [
-            "Compliant",
-            "Out of scope for open access requirements",
-            "Not compliant",
-            "Other exception",
-            "Unknown",
-        ]
-        default_oa = str(default_oa) if str(default_oa) in oa_options else "Unknown"
-        open_access_status = st.selectbox(
-            "Open Access Status",
-            oa_options,
-            index=oa_options.index(default_oa),
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    if st.button("Run Prediction"):
-        if not final_title.strip():
-            st.error("Please enter the paper title, or upload a PDF with a readable first line/title.")
-        elif not abstract_for_model.strip():
-            st.error("Please provide paper text or upload a readable PDF.")
-        else:
-            try:
-                engineered_features = build_engineered_features(
-                    raw_text=text_for_features,
-                    page_count=detected_page_count,
-                    title=final_title,
-                )
-
-                with st.spinner("Running prediction..."):
-                    pred, confidence, debug_df, classifier_classes, probabilities, debug_info = predict_paper(
-                        title=final_title,
-                        abstract_text=abstract_for_model,
-                        citation_count=citation_count,
-                        publisher=publisher,
-                        institution_name=institution_name,
-                        institution_ukprn_code=institution_ukprn_code,
-                        main_panel=main_panel,
-                        uoa_name=uoa_name,
-                        open_access_status=open_access_status,
-                        year=year,
-                        engineered_features=engineered_features,
+        if matched_metadata:
+            if st.button("Run Prediction"):
+                try:
+                    abstract_for_model = guessed_abstract if guessed_abstract.strip() else pdf_text[:3000]
+                    engineered_features = build_engineered_features(
+                        raw_text=pdf_text,
+                        page_count=detected_page_count,
+                        title=safe_text(matched_metadata.get("Title"), final_title),
                     )
 
-                st.markdown("---")
-                st.subheader("Prediction Result")
+                    with st.spinner("Running prediction..."):
+                        pred, confidence, debug_df, classifier_classes, probabilities, debug_info = predict_paper(
+                            title=safe_text(matched_metadata.get("Title"), final_title),
+                            abstract_text=abstract_for_model,
+                            citation_count=matched_metadata.get("Citation count", 0),
+                            publisher=safe_text(matched_metadata.get("Publisher"), ""),
+                            institution_name=safe_text(matched_metadata.get("Institution name"), ""),
+                            institution_ukprn_code=matched_metadata.get("Institution UKPRN code", 0),
+                            main_panel=safe_text(matched_metadata.get("Main panel"), ""),
+                            uoa_name=safe_text(matched_metadata.get("Unit of assessment name"), "Computer Science and Informatics"),
+                            open_access_status=safe_text(matched_metadata.get("Open access status"), "Unknown"),
+                            year=matched_metadata.get("Year", 0),
+                            engineered_features=engineered_features,
+                        )
 
-                if pred == 1:
-                    st.markdown(
-                        '<div class="result-good">Predicted Class: 4★ Paper</div>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(
-                        '<div class="result-warn">Predicted Class: Not 4★ Paper</div>',
-                        unsafe_allow_html=True,
-                    )
+                    st.markdown("---")
+                    st.subheader("Prediction Result")
 
-                if confidence is not None:
-                    st.write(f"**Confidence:** {confidence:.2%}")
+                    if pred == 1:
+                        st.markdown(
+                            '<div class="result-good">Predicted Class: 4★ Paper</div>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(
+                            '<div class="result-warn">Predicted Class: Not 4★ Paper</div>',
+                            unsafe_allow_html=True,
+                        )
 
-                result_col1, result_col2, result_col3 = st.columns(3)
-                with result_col1:
-                    st.metric("Prediction", "4★" if pred == 1 else "Not 4★")
-                with result_col2:
-                    st.metric("Confidence", f"{confidence:.2%}" if confidence is not None else "N/A")
-                with result_col3:
-                    st.metric("Processed", datetime.now().strftime("%H:%M:%S"))
+                    if confidence is not None:
+                        st.write(f"**Confidence:** {confidence:.2%}")
 
-                with st.expander("Show prediction debug info"):
-                    st.write("Raw prediction:", pred)
-                    st.write("Classifier classes:", classifier_classes)
-                    st.write("Prediction probabilities:", probabilities)
-                    st.json(debug_info)
+                    result_col1, result_col2, result_col3 = st.columns(3)
+                    with result_col1:
+                        st.metric("Prediction", "4★" if pred == 1 else "Not 4★")
+                    with result_col2:
+                        st.metric("Confidence", f"{confidence:.2%}" if confidence is not None else "N/A")
+                    with result_col3:
+                        st.metric("Processed", datetime.now().strftime("%H:%M:%S"))
 
-                with st.expander("Show input row used for inference"):
-                    st.dataframe(debug_df.T, use_container_width=True)
+                    with st.expander("Show prediction debug info"):
+                        st.write("Raw prediction:", pred)
+                        st.write("Classifier classes:", classifier_classes)
+                        st.write("Prediction probabilities:", probabilities)
+                        st.json(debug_info)
 
-            except Exception as e:
-                st.error(f"Prediction failed: {e}")
+                    with st.expander("Show input row used for inference"):
+                        st.dataframe(debug_df.T, use_container_width=True)
 
-    render_help_chat("Predict", model_exists, lookup_exists)
+                except Exception as e:
+                    st.error(f"Prediction failed: {e}")
+
+        render_help_chat("Predict", model_exists, lookup_exists)
 
 
 # =========================================================
@@ -1732,7 +1658,7 @@ elif page == "About":
         messages=[
             "This project focuses on predicting 4★ versus Not 4★ papers.",
             "The model combines text, engineered PDF indicators, and metadata.",
-            "Known papers can use automatic lookup; new papers may need manual metadata.",
+            "This live build is intentionally limited to prepared papers for stable presentation.",
             "You can ask me questions about the app in the chat below.",
         ],
         title="Ava · Project Guide",
@@ -1759,10 +1685,10 @@ elif page == "About":
         st.markdown(
             """
         <div class="mini-card">
-            <div class="soft-heading">Current Scope</div>
+            <div class="soft-heading">Current Demo Scope</div>
             <div class="small-muted">
-                The present version focuses on binary classification: predicting whether a paper is likely to be
-                4★ or Not 4★. It supports metadata lookup for known papers and manual metadata entry for new papers.
+                The present version focuses on binary classification and a prepared-paper demonstration workflow.
+                This keeps the live presentation more stable and reliable.
             </div>
         </div>
         """,
