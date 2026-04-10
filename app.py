@@ -38,18 +38,15 @@ You are a friendly in-app assistant for a Streamlit application called
 
 Your job is ONLY to help users with:
 - how to use the app
-- what prepared paper mode means
-- why metadata is needed in this project
+- what the prediction workflow means
+- why metadata is needed
 - what 4★ vs Not 4★ means in this project
 - what citation count / publisher / institution / open access fields are for
 - basic demo or viva guidance
-- how PDF upload and matching work
+- how PDF upload and paper processing work
 
-Important:
-- This demo build supports prepared papers only.
-- If the user asks about random unseen papers, explain that this live demo is intentionally limited
-  to prepared papers for stable demonstration.
-- Do not discuss internal file names or implementation details unless explicitly asked.
+Do NOT mention internal datasets, backend lookup files, hidden matching rules,
+or implementation details unless the user explicitly asks for technical details.
 
 Do NOT answer unrelated general knowledge questions in depth.
 If the user asks something outside the app's scope, politely redirect them
@@ -67,8 +64,8 @@ if "helper_messages" not in st.session_state:
         {
             "role": "assistant",
             "content": (
-                "Hello — I’m your app guide. This demo currently supports prepared papers only. "
-                "Ask me how to use the system or how to present it in your demo."
+                "Hello — I’m your app guide. Ask me how to use the system, "
+                "what metadata means, or how to present the app in your demo."
             ),
         }
     ]
@@ -369,7 +366,7 @@ def safe_int(value, default=0):
         return default
 
 
-def safe_text(value, default="Unknown"):
+def safe_text(value, default=""):
     if value is None:
         return default
     try:
@@ -454,7 +451,7 @@ def load_embedder(embedder_name: str):
 
 
 @st.cache_data
-def load_reference_records():
+def load_metadata_lookup():
     if not os.path.exists(LOOKUP_PATH):
         return pd.DataFrame()
 
@@ -470,15 +467,15 @@ def load_reference_records():
 # =========================================================
 # MATCHING
 # =========================================================
-def find_prepared_paper(title: str, uploaded_filename: str, reference_df: pd.DataFrame):
-    if reference_df.empty:
+def find_metadata_match(title: str, uploaded_filename: str, lookup_df: pd.DataFrame):
+    if lookup_df.empty:
         return None
 
     norm_title = normalize_text(title)
     norm_file = normalize_filename(uploaded_filename)
     paper_id = extract_paper_id(uploaded_filename)
 
-    temp = reference_df.copy()
+    temp = lookup_df.copy()
 
     if "paper_id" in temp.columns:
         temp["_paper_id"] = temp["paper_id"].astype(str).str.upper().str.strip()
@@ -526,7 +523,7 @@ def extract_pdf_text_and_pages(uploaded_file):
             except Exception:
                 continue
 
-        return "\n".join(pages).strip(), page_count
+        return "\\n".join(pages).strip(), page_count
 
     except ModuleNotFoundError as e:
         st.error(f"PDF reading dependency is missing in the deployed environment: {e}")
@@ -545,7 +542,7 @@ def extract_title_and_abstract(text: str):
 
     abstract = ""
     m = re.search(
-        r"abstract\s*(.*?)(introduction|keywords|\n\n)",
+        r"abstract\\s*(.*?)(introduction|keywords|\\n\\n)",
         text,
         re.IGNORECASE | re.DOTALL,
     )
@@ -579,47 +576,47 @@ ACADEMIC_WORDS = {
 }
 
 SECTION_PATTERNS = {
-    "abstract_present": r"\babstract\b",
-    "introduction_present": r"\bintroduction\b",
+    "abstract_present": r"\\babstract\\b",
+    "introduction_present": r"\\bintroduction\\b",
     "literature_review_present": r"(literature review|related work|background)",
     "methodology_present": r"(methodology|methods|materials and methods|approach)",
-    "results_present": r"\bresults?\b",
-    "discussion_present": r"\bdiscussion\b",
+    "results_present": r"\\bresults?\\b",
+    "discussion_present": r"\\bdiscussion\\b",
     "conclusion_present": r"(conclusion|conclusions|concluding remarks)",
     "references_present": r"(references|bibliography)",
 }
 
 COUNT_PATTERNS = {
-    "experiment_mentions": r"\bexperiment(s)?\b",
-    "dataset_mentions": r"\bdataset(s)?\b",
-    "evaluation_mentions": r"\bevaluation\b",
-    "validation_mentions": r"\bvalidation\b",
-    "benchmark_mentions": r"\bbenchmark(s)?\b",
-    "statistical_terms_count": r"\b(statistical|regression|anova|variance|significant)\b",
-    "p_value_mentions": r"\bp\s*[<=>]\s*0\.\d+|\bp-value\b",
-    "confidence_interval_mentions": r"\bconfidence interval(s)?\b|\bCI\b",
-    "ablation_mentions": r"\bablation\b",
-    "baseline_mentions": r"\bbaseline(s)?\b",
-    "reproducibility_terms_count": r"\b(reproducibility|reproducible|replication|replicable)\b",
-    "theorem_count": r"\btheorem(s)?\b",
-    "lemma_count": r"\blemma(s)?\b",
-    "proof_count": r"\bproof(s)?\b",
-    "proposition_count": r"\bproposition(s)?\b",
-    "corollary_count": r"\bcorollary\b",
-    "algorithm_count": r"\balgorithm(s)?\b",
-    "complexity_mentions": r"\bcomplexity\b|\bo\([n0-9log\+\-\*\/\^\s]+\)",
-    "formal_definition_count": r"\bdefinition(s)?\b",
-    "novelty_keywords_count": r"\bnovel|new|original|innovative|proposed\b",
-    "research_gap_mentions": r"\b(gap in the literature|research gap|existing gap)\b",
-    "new_method_mentions": r"\bproposed method|new method|novel method\b",
-    "future_work_mentions": r"\bfuture work\b",
-    "contribution_mentions": r"\bcontribution(s)?\b",
-    "sample_size_mentions": r"\bsample size\b|\bn\s*=\s*\d+\b",
-    "survey_mentions": r"\bsurvey(s)?\b",
-    "interview_mentions": r"\binterview(s)?\b",
-    "case_study_mentions": r"\bcase study|case studies\b",
-    "fieldwork_mentions": r"\bfieldwork\b",
-    "real_world_mentions": r"\breal[- ]world\b",
+    "experiment_mentions": r"\\bexperiment(s)?\\b",
+    "dataset_mentions": r"\\bdataset(s)?\\b",
+    "evaluation_mentions": r"\\bevaluation\\b",
+    "validation_mentions": r"\\bvalidation\\b",
+    "benchmark_mentions": r"\\bbenchmark(s)?\\b",
+    "statistical_terms_count": r"\\b(statistical|regression|anova|variance|significant)\\b",
+    "p_value_mentions": r"\\bp\\s*[<=>]\\s*0\\.\\d+|\\bp-value\\b",
+    "confidence_interval_mentions": r"\\bconfidence interval(s)?\\b|\\bCI\\b",
+    "ablation_mentions": r"\\bablation\\b",
+    "baseline_mentions": r"\\bbaseline(s)?\\b",
+    "reproducibility_terms_count": r"\\b(reproducibility|reproducible|replication|replicable)\\b",
+    "theorem_count": r"\\btheorem(s)?\\b",
+    "lemma_count": r"\\blemma(s)?\\b",
+    "proof_count": r"\\bproof(s)?\\b",
+    "proposition_count": r"\\bproposition(s)?\\b",
+    "corollary_count": r"\\bcorollary\\b",
+    "algorithm_count": r"\\balgorithm(s)?\\b",
+    "complexity_mentions": r"\\bcomplexity\\b|\\bo\\([n0-9log\\+\\-\\*\\/\\^\\s]+\\)",
+    "formal_definition_count": r"\\bdefinition(s)?\\b",
+    "novelty_keywords_count": r"\\bnovel|new|original|innovative|proposed\\b",
+    "research_gap_mentions": r"\\b(gap in the literature|research gap|existing gap)\\b",
+    "new_method_mentions": r"\\bproposed method|new method|novel method\\b",
+    "future_work_mentions": r"\\bfuture work\\b",
+    "contribution_mentions": r"\\bcontribution(s)?\\b",
+    "sample_size_mentions": r"\\bsample size\\b|\\bn\\s*=\\s*\\d+\\b",
+    "survey_mentions": r"\\bsurvey(s)?\\b",
+    "interview_mentions": r"\\binterview(s)?\\b",
+    "case_study_mentions": r"\\bcase study|case studies\\b",
+    "fieldwork_mentions": r"\\bfieldwork\\b",
+    "real_world_mentions": r"\\breal[- ]world\\b",
 }
 
 
@@ -669,7 +666,7 @@ def binary_present(pattern: str, text: str) -> int:
 
 
 def passive_voice_ratio(text: str) -> float:
-    matches = re.findall(r"\b(is|are|was|were|been|be|being)\s+\w+ed\b", text.lower())
+    matches = re.findall(r"\\b(is|are|was|were|been|be|being)\\s+\\w+ed\\b", text.lower())
     sentences = split_sentences(text)
     if not sentences:
         return 0.0
@@ -679,24 +676,24 @@ def passive_voice_ratio(text: str) -> float:
 def punctuation_density(text: str) -> float:
     if not text:
         return 0.0
-    punct = len(re.findall(r"[,\.;:!?()\[\]{}\-]", text))
+    punct = len(re.findall(r"[,\\.;:!?()\\[\\]{}\\-]", text))
     return punct / max(len(text), 1)
 
 
 def github_link_present(text: str) -> int:
-    return int(bool(re.search(r"github\.com", text, flags=re.IGNORECASE)))
+    return int(bool(re.search(r"github\\.com", text, flags=re.IGNORECASE)))
 
 
 def code_link_present(text: str) -> int:
-    return int(bool(re.search(r"(github\.com|gitlab\.com|bitbucket\.org|code available|source code)", text, flags=re.IGNORECASE)))
+    return int(bool(re.search(r"(github\\.com|gitlab\\.com|bitbucket\\.org|code available|source code)", text, flags=re.IGNORECASE)))
 
 
 def pseudocode_present(text: str) -> int:
-    return int(bool(re.search(r"\bpseudocode\b", text, flags=re.IGNORECASE)))
+    return int(bool(re.search(r"\\bpseudocode\\b", text, flags=re.IGNORECASE)))
 
 
 def formula_density(text: str) -> float:
-    formulas = len(re.findall(r"[=+\-/*^<>≤≥∑∫λμσπ]", text))
+    formulas = len(re.findall(r"[=+\\-/*^<>≤≥∑∫λμσπ]", text))
     words = len(tokenize_words(text))
     return formulas / max(words, 1)
 
@@ -743,7 +740,7 @@ def build_engineered_features(raw_text: str, page_count: int, title: str):
         "pdf_found": int(page_count > 0),
         "page_count": page_count,
         "abstract_text": text[:3000],
-        "abstract_present": binary_present(r"\babstract\b", text),
+        "abstract_present": binary_present(r"\\babstract\\b", text),
         "word_count": word_count,
         "unique_word_count": unique_word_count,
         "vocabulary_richness": vocabulary_richness(text),
@@ -769,7 +766,7 @@ def build_engineered_features(raw_text: str, page_count: int, title: str):
     for feature_name, pattern in COUNT_PATTERNS.items():
         features[feature_name] = count_matches(pattern, text)
 
-    features["limitation_discussion_presence"] = binary_present(r"\blimitation(s)?\b", text)
+    features["limitation_discussion_presence"] = binary_present(r"\\blimitation(s)?\\b", text)
 
     return features
 
@@ -950,7 +947,7 @@ def predict_paper(
 # =========================================================
 # ASSISTANT UI
 # =========================================================
-def render_avatar_assistant(messages, title="Ava · App Guide", subtitle="Ask me about uploads, matching, or demo tips."):
+def render_avatar_assistant(messages, title="Ava · App Guide", subtitle="Ask me about uploads, metadata, or demo tips."):
     messages_json = json.dumps(messages, ensure_ascii=False)
 
     html = f"""
@@ -1126,27 +1123,15 @@ def local_app_help(question: str) -> str:
 
     if any(x in q for x in ["how do i use", "how to use", "how can i use", "start", "begin", "upload"]):
         return (
-            "Go to the Predict page and upload one of the prepared demonstration papers. "
-            "If the paper is recognized, the app will load its stored context and let you run prediction."
-        )
-
-    if "prepared paper" in q or "known paper" in q or "match" in q:
-        return (
-            "A prepared paper is one that the demo already recognizes. "
-            "The app checks the uploaded file against the prepared demonstration set and only runs prediction when it finds a valid match."
-        )
-
-    if "new paper" in q or "random pdf" in q or "unseen" in q:
-        return (
-            "This demo build is intentionally limited to prepared papers only. "
-            "That keeps the live presentation stable and consistent."
+            "Go to the Predict page, upload a PDF, review the extracted text, "
+            "check the metadata fields, and then run the prediction."
         )
 
     if "metadata" in q or "citation" in q or "publisher" in q or "institution" in q or "open access" in q:
         return (
             "Metadata gives the hybrid model extra context beyond the paper text. "
             "In this project, fields like citation count, publisher, institution, main panel, "
-            "UOA name, open access status, and year all contribute to the final prediction."
+            "UOA name, open access status, and year can support the prediction."
         )
 
     if "4★" in question or "4 star" in q or "not 4" in q:
@@ -1157,17 +1142,18 @@ def local_app_help(question: str) -> str:
 
     if "demo" in q or "viva" in q or "presentation" in q:
         return (
-            "For the best demo, upload one of the prepared papers first. "
-            "That gives the strongest and most stable demonstration of the system."
+            "For the best demo, upload a paper, show the extracted information, explain the metadata role, "
+            "and then run the model prediction."
         )
 
     if "pdf" in q or "abstract" in q or "text extraction" in q:
         return (
-            "When you upload a PDF, the app extracts page text, guesses the title, and isolates abstract-style content where possible before prediction."
+            "When you upload a PDF, the app tries to extract page text, guess the title, and isolate abstract-style content. "
+            "If extraction is weak, the metadata fields can still help complete the prediction workflow."
         )
 
     return (
-        "I can help with using the app, prepared paper matching, metadata meaning, prediction flow, and demo tips. "
+        "I can help with using the app, metadata meaning, prediction flow, and demo tips. "
         "Try asking something like: 'How do I use this app?' or 'Why is metadata needed?'"
     )
 
@@ -1187,15 +1173,14 @@ def ask_gpt_helper(question: str, current_page: str, model_exists: bool, lookup_
     app_context = f"""
 Current page: {current_page}
 Model file present: {'Yes' if model_exists else 'No'}
-Reference set present: {'Yes' if lookup_exists else 'No'}
+Metadata lookup available: {'Yes' if lookup_exists else 'No'}
 Session ID: {st.session_state['assistant_session_id']}
-Demo mode: prepared papers only
 """
 
     kwargs = {
         "model": model_name,
         "instructions": APP_ASSISTANT_SYSTEM_PROMPT,
-        "input": f"{app_context}\nUser question: {question}",
+        "input": f"{app_context}\\nUser question: {question}",
         "max_output_tokens": 260,
     }
 
@@ -1222,7 +1207,7 @@ def respond_from_assistant(question: str, current_page: str, model_exists: bool,
             fallback = local_app_help(question)
             return (
                 fallback
-                + "\n\n_(The GPT helper was unavailable just now, so I answered using the built-in app guide.)_"
+                + "\\n\\n_(The GPT helper was unavailable just now, so I answered using the built-in app guide.)_"
             )
 
     return local_app_help(question)
@@ -1233,8 +1218,8 @@ def reset_assistant_chat():
         {
             "role": "assistant",
             "content": (
-                "Hello — I’m your app guide. This demo currently supports prepared papers only. "
-                "Ask me how to use the system or how to present it in your demo."
+                "Hello — I’m your app guide. Ask me how to use the system, "
+                "what metadata means, or how to present the app in your demo."
             ),
         }
     ]
@@ -1277,8 +1262,8 @@ def render_help_chat(current_page: str, model_exists: bool, lookup_exists: bool)
         handle_assistant_prompt("Why is metadata needed?", current_page, model_exists, lookup_exists)
         st.rerun()
 
-    if q3.button("What is a prepared paper?", key=f"q3_{current_page}"):
-        handle_assistant_prompt("What is a prepared paper?", current_page, model_exists, lookup_exists)
+    if q3.button("What is the prediction workflow?", key=f"q3_{current_page}"):
+        handle_assistant_prompt("What is the prediction workflow?", current_page, model_exists, lookup_exists)
         st.rerun()
 
     if q4.button("How should I demo this?", key=f"q4_{current_page}"):
@@ -1324,9 +1309,9 @@ else:
     st.sidebar.error("Model file missing")
 
 if lookup_exists:
-    st.sidebar.success("Prepared paper reference detected")
+    st.sidebar.success("Metadata service available")
 else:
-    st.sidebar.warning("Prepared paper reference missing")
+    st.sidebar.warning("Metadata service unavailable")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("## Assistant Status")
@@ -1337,9 +1322,9 @@ else:
     st.sidebar.info("GPT helper not configured")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("## Demo Mode")
+st.sidebar.markdown("## Quick Notes")
 st.sidebar.info(
-    "This live demo currently supports prepared papers only for stable presentation."
+    "Upload a paper, review the extracted information, confirm or complete metadata, and run the prediction."
 )
 
 
@@ -1353,7 +1338,7 @@ if page == "Home":
         <div class="hero-title">Research Paper Quality Prediction System</div>
         <div class="hero-subtitle">
             A hybrid web application for predicting whether an individual research paper is likely to be
-            <b>4★</b> or <b>Not 4★</b>, using textual content, engineered PDF-based indicators, and project metadata.
+            <b>4★</b> or <b>Not 4★</b>, using textual content, engineered PDF-based indicators, and metadata features.
         </div>
     </div>
     """,
@@ -1362,9 +1347,9 @@ if page == "Home":
 
     render_avatar_assistant(
         messages=[
-            "Welcome! I can guide you through the prediction workflow.",
-            "This live demo is configured for prepared papers only.",
-            "That keeps the presentation stable, fast, and consistent.",
+            "Welcome! I can guide you through the paper prediction workflow.",
+            "Upload a paper to begin processing.",
+            "Metadata can support the prediction alongside the paper text.",
             "Use the help chat below if you have any doubts about the app or demo.",
         ],
         title="Ava · Welcome Guide",
@@ -1396,8 +1381,8 @@ if page == "Home":
         st.markdown(
             """
         <div class="stat-card">
-            <div class="stat-value">Prepared Demo</div>
-            <div class="stat-label">Live Presentation Mode</div>
+            <div class="stat-value">Hybrid</div>
+            <div class="stat-label">Prediction Approach</div>
         </div>
         """,
             unsafe_allow_html=True,
@@ -1411,8 +1396,8 @@ if page == "Home":
         "to produce a classification result."
     )
     st.write(
-        "For this live demo, the application is intentionally restricted to prepared papers only. "
-        "That keeps the workflow reliable and presentation-ready."
+        "When available, metadata can be filled automatically. Otherwise, metadata can be reviewed and completed "
+        "as part of the prediction workflow."
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1422,10 +1407,10 @@ if page == "Home":
         st.markdown(
             """
         <div class="mini-card">
-            <div class="soft-heading">Prepared Paper Mode</div>
+            <div class="soft-heading">Paper Upload</div>
             <div class="small-muted">
-                Upload one of the prepared demonstration papers. The application checks the uploaded paper,
-                loads its stored context, and runs the hybrid prediction pipeline.
+                Upload a research paper PDF and allow the system to extract title, abstract-style text,
+                and structural information for the hybrid prediction workflow.
             </div>
         </div>
         """,
@@ -1436,10 +1421,10 @@ if page == "Home":
         st.markdown(
             """
         <div class="mini-card">
-            <div class="soft-heading">Why this demo mode?</div>
+            <div class="soft-heading">Metadata Completion</div>
             <div class="small-muted">
-                This version is intentionally limited for a stable live presentation. It helps ensure
-                predictable behaviour during the demo and viva.
+                Metadata fields can be reviewed and completed before prediction so the model can use
+                both contextual and document-derived information.
             </div>
         </div>
         """,
@@ -1448,9 +1433,9 @@ if page == "Home":
 
     st.markdown("<div class='section-card'>", unsafe_allow_html=True)
     st.markdown("<div class='soft-heading'>Workflow</div>", unsafe_allow_html=True)
-    st.write("1. Upload a prepared paper PDF")
+    st.write("1. Upload a paper PDF")
     st.write("2. Extract paper text and abstract-style content")
-    st.write("3. Confirm a valid prepared-paper match")
+    st.write("3. Review or complete metadata")
     st.write("4. Run the hybrid prediction model")
     st.write("5. Review the result and supporting details")
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1467,8 +1452,8 @@ elif page == "Predict":
     <div class="hero-box">
         <div class="hero-title">Prediction Workspace</div>
         <div class="hero-subtitle">
-            Upload a prepared research paper PDF, review the extracted paper information,
-            confirm the prepared-paper match, and run the hybrid model.
+            Upload a research paper PDF, review the extracted paper information, confirm metadata,
+            and run the hybrid model to predict whether the paper is likely to be 4★ or Not 4★.
         </div>
     </div>
     """,
@@ -1477,164 +1462,243 @@ elif page == "Predict":
 
     render_avatar_assistant(
         messages=[
-            "Upload one of the prepared demonstration papers.",
-            "The app will first verify that the paper is recognized.",
-            "Only recognized prepared papers can proceed to prediction in this demo build.",
-            "Use the help chat below for explanation or demo tips.",
+            "Start by entering a title or uploading a PDF.",
+            "The app will extract text and try to populate metadata when available.",
+            "You can review or complete the metadata fields before prediction.",
+            "Use the help chat below if you want explanation or demo tips.",
         ],
         title="Ava · Prediction Guide",
         subtitle="Helping you through the prediction process",
     )
 
-    reference_df = load_reference_records()
+    lookup_df = load_metadata_lookup()
 
     top_left, top_right = st.columns([1.4, 1])
 
     with top_left:
         st.markdown("<div class='section-card'>", unsafe_allow_html=True)
         st.subheader("Paper Input")
-        uploaded_pdf = st.file_uploader("Upload Prepared Paper PDF", type=["pdf"])
+        title_input = st.text_input("Paper Title", "")
+        uploaded_pdf = st.file_uploader("Upload Paper PDF", type=["pdf"])
+        manual_text = st.text_area(
+            "Abstract / Extracted Text / Key Paper Content",
+            height=240,
+            placeholder="Paste abstract or important paper text here if needed...",
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
     with top_right:
         st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-        st.subheader("Demo Guidance")
+        st.subheader("Input Guidance")
         st.markdown(
             """
         <div class="glass-note">
-            <b>This live demo supports prepared papers only.</b><br>
-            • upload one of the prepared demonstration PDFs<br>
-            • random external PDFs are intentionally blocked in this version<br>
-            • this keeps the presentation stable and consistent
+            <b>Best results:</b><br>
+            • upload a readable PDF<br>
+            • keep the title accurate<br>
+            • review metadata before prediction<br>
+            • use manual text if PDF extraction is weak
         </div>
         """,
             unsafe_allow_html=True,
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    if uploaded_pdf is None:
-        st.info("Upload a prepared paper PDF to begin.")
-    else:
+    text_for_features = manual_text
+    abstract_for_model = manual_text
+    detected_page_count = 0
+    final_title = title_input.strip()
+    uploaded_filename = uploaded_pdf.name if uploaded_pdf is not None else ""
+
+    if uploaded_pdf is not None:
         with st.spinner("Reading PDF..."):
             pdf_text, detected_page_count = extract_pdf_text_and_pages(uploaded_pdf)
 
-        guessed_title, guessed_abstract = extract_title_and_abstract(pdf_text)
-        final_title = guessed_title.strip()
-        uploaded_filename = uploaded_pdf.name
+        if pdf_text.strip():
+            guessed_title, guessed_abstract = extract_title_and_abstract(pdf_text)
 
-        matched_metadata = find_prepared_paper(final_title, uploaded_filename, reference_df)
+            if not final_title and guessed_title:
+                final_title = guessed_title
 
-        if matched_metadata:
-            st.markdown(
-                '<div class="status-good">Prepared paper recognized successfully. Prediction is available for this file.</div>',
-                unsafe_allow_html=True,
-            )
+            if guessed_abstract:
+                abstract_for_model = guessed_abstract
+                text_for_features = pdf_text
+                st.markdown(
+                    '<div class="status-good">PDF text extracted successfully. Extracted content will be used for prediction.</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                text_for_features = pdf_text
+                abstract_for_model = manual_text if manual_text.strip() else pdf_text[:3000]
+                st.markdown(
+                    '<div class="status-warn">PDF text was extracted, but the abstract could not be isolated clearly. Fallback text will be used.</div>',
+                    unsafe_allow_html=True,
+                )
         else:
             st.markdown(
-                '<div class="status-warn">This PDF is not part of the prepared demonstration set. In this live demo, prediction is available only for prepared papers.</div>',
+                '<div class="status-warn">PDF text could not be extracted. The manually entered text will be used instead.</div>',
                 unsafe_allow_html=True,
             )
 
-        metric_1, metric_2, metric_3 = st.columns(3)
-        with metric_1:
-            st.metric("Detected Pages", detected_page_count)
-        with metric_2:
-            st.metric("PDF Uploaded", "Yes")
-        with metric_3:
-            st.metric("Prepared Match", "Yes" if matched_metadata else "No")
+    matched_metadata = find_metadata_match(final_title, uploaded_filename, lookup_df)
 
-        left_col, right_col = st.columns([1.1, 1])
+    if matched_metadata:
+        st.markdown(
+            '<div class="status-good">Paper information was identified successfully. Available metadata has been filled in.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="status-info">You can review and complete the metadata fields before running prediction.</div>',
+            unsafe_allow_html=True,
+        )
 
-        with left_col:
-            st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-            st.subheader("Extracted Paper Information")
+    metric_1, metric_2, metric_3 = st.columns(3)
+    with metric_1:
+        st.metric("Detected Pages", detected_page_count)
+    with metric_2:
+        st.metric("PDF Uploaded", "Yes" if uploaded_pdf is not None else "No")
+    with metric_3:
+        st.metric("Metadata Filled", "Auto / Manual" if uploaded_pdf is not None else "Pending")
+
+    left_col, right_col = st.columns([1.1, 1])
+
+    with left_col:
+        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+        st.subheader("Extracted Paper Information")
+
+        if final_title:
+            st.write(f"**Detected title:** {final_title}")
+        else:
+            st.write("**Detected title:** Not available yet")
+
+        if uploaded_filename:
             st.write(f"**Uploaded file:** {uploaded_filename}")
-            st.write(f"**Detected title:** {final_title if final_title else 'Not clearly detected'}")
-            preview_text = clean_text(guessed_abstract or pdf_text)[:1200]
-            if preview_text:
-                st.text_area("Text preview used for model input", preview_text, height=220, disabled=True)
-            else:
-                st.info("No readable paper text is currently available.")
-            st.markdown("</div>", unsafe_allow_html=True)
 
-        with right_col:
-            st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-            st.subheader("Prepared Paper Summary")
+        preview_text = clean_text(abstract_for_model)[:1200]
+        if preview_text:
+            st.text_area("Text preview used for model input", preview_text, height=220, disabled=True)
+        else:
+            st.info("No paper text is currently available.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-            if matched_metadata:
-                st.write(f"**Title:** {safe_text(matched_metadata.get('Title'), 'Not available')}")
-                st.write(f"**Paper ID:** {safe_text(matched_metadata.get('paper_id'), 'Not available')}")
-                st.write(f"**Publisher:** {safe_text(matched_metadata.get('Publisher'), 'Not available')}")
-                st.write(f"**Institution:** {safe_text(matched_metadata.get('Institution name'), 'Not available')}")
-                st.write(f"**Year:** {safe_text(matched_metadata.get('Year'), 'Not available')}")
-                st.write(f"**Citation Count:** {safe_text(matched_metadata.get('Citation count'), 'Not available')}")
-            else:
-                st.info("No prepared-paper record was found for this uploaded PDF.")
-            st.markdown("</div>", unsafe_allow_html=True)
+    with right_col:
+        st.markdown("<div class='section-card'>", unsafe_allow_html=True)
+        st.subheader("Metadata")
 
-        if matched_metadata:
-            if st.button("Run Prediction"):
-                try:
-                    abstract_for_model = guessed_abstract if guessed_abstract.strip() else pdf_text[:3000]
-                    engineered_features = build_engineered_features(
-                        raw_text=pdf_text,
-                        page_count=detected_page_count,
-                        title=safe_text(matched_metadata.get("Title"), final_title),
+        default_citation = matched_metadata.get("Citation count", 0) if matched_metadata else 0
+        default_publisher = matched_metadata.get("Publisher", "") if matched_metadata else ""
+        default_institution = matched_metadata.get("Institution name", "") if matched_metadata else ""
+        default_ukprn = matched_metadata.get("Institution UKPRN code", 0) if matched_metadata else 0
+        default_main_panel = matched_metadata.get("Main panel", "") if matched_metadata else ""
+        default_uoa = (
+            matched_metadata.get("Unit of assessment name", "Computer Science and Informatics")
+            if matched_metadata
+            else "Computer Science and Informatics"
+        )
+        default_oa = matched_metadata.get("Open access status", "Unknown") if matched_metadata else "Unknown"
+        default_year = matched_metadata.get("Year", 0) if matched_metadata else 0
+
+        citation_count = st.number_input(
+            "Citation Count",
+            min_value=0.0,
+            value=float(safe_float(default_citation, 0)),
+            step=1.0,
+        )
+        publisher = st.text_input("Publisher", safe_text(default_publisher, ""))
+        institution_name = st.text_input("Institution Name", safe_text(default_institution, ""))
+        institution_ukprn_code = st.text_input("Institution UKPRN Code", str(default_ukprn if default_ukprn else ""))
+        main_panel = st.text_input("Main Panel", safe_text(default_main_panel, ""))
+        uoa_name = st.text_input("Unit of Assessment Name", safe_text(default_uoa, "Computer Science and Informatics"))
+        year = st.number_input(
+            "Year",
+            min_value=0,
+            max_value=2100,
+            value=safe_int(default_year, 0),
+            step=1,
+        )
+
+        oa_options = [
+            "Compliant",
+            "Out of scope for open access requirements",
+            "Not compliant",
+            "Other exception",
+            "Unknown",
+        ]
+        default_oa = str(default_oa) if str(default_oa) in oa_options else "Unknown"
+        open_access_status = st.selectbox(
+            "Open Access Status",
+            oa_options,
+            index=oa_options.index(default_oa),
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    if st.button("Run Prediction"):
+        if not final_title.strip():
+            st.error("Please enter the paper title, or upload a PDF with a readable first line/title.")
+        elif not abstract_for_model.strip():
+            st.error("Please provide paper text or upload a readable PDF.")
+        else:
+            try:
+                engineered_features = build_engineered_features(
+                    raw_text=text_for_features,
+                    page_count=detected_page_count,
+                    title=final_title,
+                )
+
+                with st.spinner("Running prediction..."):
+                    pred, confidence, debug_df, classifier_classes, probabilities, debug_info = predict_paper(
+                        title=final_title,
+                        abstract_text=abstract_for_model,
+                        citation_count=citation_count,
+                        publisher=publisher,
+                        institution_name=institution_name,
+                        institution_ukprn_code=institution_ukprn_code,
+                        main_panel=main_panel,
+                        uoa_name=uoa_name,
+                        open_access_status=open_access_status,
+                        year=year,
+                        engineered_features=engineered_features,
                     )
 
-                    with st.spinner("Running prediction..."):
-                        pred, confidence, debug_df, classifier_classes, probabilities, debug_info = predict_paper(
-                            title=safe_text(matched_metadata.get("Title"), final_title),
-                            abstract_text=abstract_for_model,
-                            citation_count=matched_metadata.get("Citation count", 0),
-                            publisher=safe_text(matched_metadata.get("Publisher"), ""),
-                            institution_name=safe_text(matched_metadata.get("Institution name"), ""),
-                            institution_ukprn_code=matched_metadata.get("Institution UKPRN code", 0),
-                            main_panel=safe_text(matched_metadata.get("Main panel"), ""),
-                            uoa_name=safe_text(matched_metadata.get("Unit of assessment name"), "Computer Science and Informatics"),
-                            open_access_status=safe_text(matched_metadata.get("Open access status"), "Unknown"),
-                            year=matched_metadata.get("Year", 0),
-                            engineered_features=engineered_features,
-                        )
+                st.markdown("---")
+                st.subheader("Prediction Result")
 
-                    st.markdown("---")
-                    st.subheader("Prediction Result")
+                if pred == 1:
+                    st.markdown(
+                        '<div class="result-good">Predicted Class: 4★ Paper</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        '<div class="result-warn">Predicted Class: Not 4★ Paper</div>',
+                        unsafe_allow_html=True,
+                    )
 
-                    if pred == 1:
-                        st.markdown(
-                            '<div class="result-good">Predicted Class: 4★ Paper</div>',
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        st.markdown(
-                            '<div class="result-warn">Predicted Class: Not 4★ Paper</div>',
-                            unsafe_allow_html=True,
-                        )
+                if confidence is not None:
+                    st.write(f"**Confidence:** {confidence:.2%}")
 
-                    if confidence is not None:
-                        st.write(f"**Confidence:** {confidence:.2%}")
+                result_col1, result_col2, result_col3 = st.columns(3)
+                with result_col1:
+                    st.metric("Prediction", "4★" if pred == 1 else "Not 4★")
+                with result_col2:
+                    st.metric("Confidence", f"{confidence:.2%}" if confidence is not None else "N/A")
+                with result_col3:
+                    st.metric("Processed", datetime.now().strftime("%H:%M:%S"))
 
-                    result_col1, result_col2, result_col3 = st.columns(3)
-                    with result_col1:
-                        st.metric("Prediction", "4★" if pred == 1 else "Not 4★")
-                    with result_col2:
-                        st.metric("Confidence", f"{confidence:.2%}" if confidence is not None else "N/A")
-                    with result_col3:
-                        st.metric("Processed", datetime.now().strftime("%H:%M:%S"))
+                with st.expander("Show prediction debug info"):
+                    st.write("Raw prediction:", pred)
+                    st.write("Classifier classes:", classifier_classes)
+                    st.write("Prediction probabilities:", probabilities)
+                    st.json(debug_info)
 
-                    with st.expander("Show prediction debug info"):
-                        st.write("Raw prediction:", pred)
-                        st.write("Classifier classes:", classifier_classes)
-                        st.write("Prediction probabilities:", probabilities)
-                        st.json(debug_info)
+                with st.expander("Show input row used for inference"):
+                    st.dataframe(debug_df.T, use_container_width=True)
 
-                    with st.expander("Show input row used for inference"):
-                        st.dataframe(debug_df.T, use_container_width=True)
+            except Exception as e:
+                st.error(f"Prediction failed: {e}")
 
-                except Exception as e:
-                    st.error(f"Prediction failed: {e}")
-
-        render_help_chat("Predict", model_exists, lookup_exists)
+    render_help_chat("Predict", model_exists, lookup_exists)
 
 
 # =========================================================
@@ -1658,7 +1722,7 @@ elif page == "About":
         messages=[
             "This project focuses on predicting 4★ versus Not 4★ papers.",
             "The model combines text, engineered PDF indicators, and metadata.",
-            "This live build is intentionally limited to prepared papers for stable presentation.",
+            "The system can use metadata alongside extracted paper content.",
             "You can ask me questions about the app in the chat below.",
         ],
         title="Ava · Project Guide",
@@ -1685,10 +1749,10 @@ elif page == "About":
         st.markdown(
             """
         <div class="mini-card">
-            <div class="soft-heading">Current Demo Scope</div>
+            <div class="soft-heading">Current Scope</div>
             <div class="small-muted">
-                The present version focuses on binary classification and a prepared-paper demonstration workflow.
-                This keeps the live presentation more stable and reliable.
+                The present version focuses on binary classification: predicting whether a paper is likely to be
+                4★ or Not 4★ using a hybrid prediction workflow.
             </div>
         </div>
         """,
