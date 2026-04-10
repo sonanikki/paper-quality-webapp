@@ -26,7 +26,7 @@ st.set_page_config(
     page_title="Research Paper Quality Prediction System",
     page_icon="📄",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 MODEL_PATH = "binary_hybrid_logistic.pkl"
@@ -64,7 +64,7 @@ if "helper_messages" not in st.session_state:
             "content": (
                 "Hello — I’m your app guide. Ask me how to use the system, "
                 "what metadata means, or how to present the app in your demo."
-            )
+            ),
         }
     ]
 
@@ -81,10 +81,11 @@ if "use_gpt_helper" not in st.session_state:
 # =========================================================
 # STYLING
 # =========================================================
-st.markdown("""
+st.markdown(
+    """
 <style>
     .stApp {
-        background: linear-gradient(180deg, #f5f7fb 0%, #eef3f9 45%, #f8fbff 100%);
+        background: linear-gradient(180deg, #0a0f0d 0%, #101915 45%, #0c120f 100%);
     }
 
     .block-container {
@@ -94,13 +95,14 @@ st.markdown("""
     }
 
     .hero-box {
-        background: linear-gradient(135deg, #0f172a 0%, #1e293b 45%, #334155 100%);
+        background: linear-gradient(135deg, #050807 0%, #0c1511 45%, #123222 100%);
         color: white;
         padding: 2rem 2rem 1.6rem 2rem;
         border-radius: 24px;
-        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
         margin-bottom: 1.2rem;
         animation: fadeUp 0.7s ease;
+        border: 1px solid rgba(74, 222, 128, 0.16);
     }
 
     .hero-title {
@@ -108,47 +110,51 @@ st.markdown("""
         font-weight: 800;
         line-height: 1.15;
         margin-bottom: 0.35rem;
+        color: #ecfdf5;
     }
 
     .hero-subtitle {
         font-size: 1.03rem;
         line-height: 1.65;
-        opacity: 0.95;
+        opacity: 0.96;
         max-width: 980px;
+        color: #d1fae5;
     }
 
     .section-card {
-        background: rgba(255, 255, 255, 0.94);
+        background: rgba(16, 24, 20, 0.95);
         backdrop-filter: blur(6px);
         padding: 1.15rem 1.25rem;
         border-radius: 20px;
-        border: 1px solid rgba(148, 163, 184, 0.18);
-        box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07);
+        border: 1px solid rgba(74, 222, 128, 0.16);
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
         margin-bottom: 1rem;
         animation: fadeUp 0.65s ease;
+        color: #ecfdf5;
     }
 
     .mini-card {
-        background: white;
+        background: linear-gradient(180deg, #0f1713 0%, #13201a 100%);
         padding: 1rem 1rem 0.9rem 1rem;
         border-radius: 18px;
-        border: 1px solid rgba(148, 163, 184, 0.18);
-        box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
+        border: 1px solid rgba(74, 222, 128, 0.16);
+        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.25);
         height: 100%;
         transition: all 0.25s ease;
+        color: #ecfdf5;
     }
 
     .mini-card:hover {
         transform: translateY(-4px);
-        box-shadow: 0 14px 28px rgba(15, 23, 42, 0.10);
+        box-shadow: 0 14px 28px rgba(0, 0, 0, 0.34);
     }
 
     .stat-card {
-        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+        background: linear-gradient(180deg, #0d1411 0%, #15211b 100%);
         padding: 1rem 1.1rem;
         border-radius: 18px;
-        border: 1px solid rgba(148, 163, 184, 0.20);
-        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+        border: 1px solid rgba(74, 222, 128, 0.20);
+        box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
         text-align: center;
         animation: fadeUp 0.6s ease;
     }
@@ -156,78 +162,78 @@ st.markdown("""
     .stat-value {
         font-size: 1.5rem;
         font-weight: 800;
-        color: #0f172a;
+        color: #4ade80;
         margin-bottom: 0.2rem;
     }
 
     .stat-label {
         font-size: 0.95rem;
-        color: #475569;
+        color: #bbf7d0;
         font-weight: 500;
     }
 
     .status-good {
         padding: 0.85rem 1rem;
         border-radius: 16px;
-        background: #ecfdf5;
-        color: #065f46;
-        border: 1px solid #a7f3d0;
+        background: #052e16;
+        color: #bbf7d0;
+        border: 1px solid #22c55e;
         font-weight: 600;
         margin-bottom: 0.9rem;
-        box-shadow: 0 6px 14px rgba(16, 185, 129, 0.08);
+        box-shadow: 0 6px 14px rgba(34, 197, 94, 0.14);
     }
 
     .status-info {
         padding: 0.85rem 1rem;
         border-radius: 16px;
-        background: #eff6ff;
-        color: #1d4ed8;
-        border: 1px solid #93c5fd;
+        background: #0f172a;
+        color: #86efac;
+        border: 1px solid #16a34a;
         font-weight: 600;
         margin-bottom: 0.9rem;
-        box-shadow: 0 6px 14px rgba(59, 130, 246, 0.08);
+        box-shadow: 0 6px 14px rgba(22, 163, 74, 0.12);
     }
 
     .status-warn {
         padding: 0.85rem 1rem;
         border-radius: 16px;
-        background: #fff7ed;
-        color: #9a3412;
-        border: 1px solid #fdba74;
+        background: #1c1917;
+        color: #facc15;
+        border: 1px solid #65a30d;
         font-weight: 600;
         margin-bottom: 0.9rem;
-        box-shadow: 0 6px 14px rgba(249, 115, 22, 0.08);
+        box-shadow: 0 6px 14px rgba(101, 163, 13, 0.12);
     }
 
     .result-good {
         padding: 1.1rem 1.2rem;
         border-radius: 18px;
-        background: linear-gradient(180deg, #ecfdf5 0%, #f0fdf4 100%);
-        border: 1px solid #86efac;
-        color: #166534;
+        background: linear-gradient(180deg, #052e16 0%, #14532d 100%);
+        border: 1px solid #22c55e;
+        color: #dcfce7;
         font-size: 1.1rem;
         font-weight: 700;
-        box-shadow: 0 10px 24px rgba(34, 197, 94, 0.12);
+        box-shadow: 0 10px 24px rgba(34, 197, 94, 0.16);
     }
 
     .result-warn {
         padding: 1.1rem 1.2rem;
         border-radius: 18px;
-        background: linear-gradient(180deg, #fff7ed 0%, #fffbeb 100%);
-        border: 1px solid #fdba74;
-        color: #9a3412;
+        background: linear-gradient(180deg, #172018 0%, #243c25 100%);
+        border: 1px solid #65a30d;
+        color: #ecfccb;
         font-size: 1.1rem;
         font-weight: 700;
-        box-shadow: 0 10px 24px rgba(249, 115, 22, 0.12);
+        box-shadow: 0 10px 24px rgba(101, 163, 13, 0.14);
     }
 
     .glass-note {
         padding: 0.95rem 1rem;
         border-radius: 18px;
-        background: rgba(255,255,255,0.8);
-        border: 1px solid rgba(148,163,184,0.18);
-        box-shadow: 0 8px 20px rgba(15,23,42,0.05);
-        color: #334155;
+        background: rgba(13, 20, 17, 0.88);
+        border: 1px solid rgba(74, 222, 128, 0.14);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
+        color: #d1fae5;
         line-height: 1.6;
         margin-bottom: 1rem;
     }
@@ -235,19 +241,19 @@ st.markdown("""
     .soft-heading {
         font-size: 1.08rem;
         font-weight: 700;
-        color: #0f172a;
+        color: #4ade80;
         margin-bottom: 0.55rem;
     }
 
     .small-muted {
-        color: #64748b;
+        color: #bbf7d0;
         font-size: 0.94rem;
         line-height: 1.6;
     }
 
     .footer-note {
         text-align: center;
-        color: #64748b;
+        color: #86efac;
         margin-top: 2rem;
         font-size: 0.9rem;
     }
@@ -258,23 +264,50 @@ st.markdown("""
         padding: 0.75rem 1rem;
         border: none;
         font-weight: 700;
-        color: white;
-        background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
-        box-shadow: 0 10px 22px rgba(37, 99, 235, 0.20);
+        color: #04110a;
+        background: linear-gradient(135deg, #22c55e 0%, #4ade80 100%);
+        box-shadow: 0 10px 22px rgba(34, 197, 94, 0.22);
         transition: all 0.25s ease;
     }
 
     div.stButton > button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 14px 28px rgba(37, 99, 235, 0.26);
+        box-shadow: 0 14px 28px rgba(34, 197, 94, 0.30);
     }
 
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0f172a 0%, #172554 100%);
+        background: linear-gradient(180deg, #030706 0%, #08110d 45%, #0c1a13 100%);
     }
 
     [data-testid="stSidebar"] * {
-        color: white !important;
+        color: #ecfdf5 !important;
+    }
+
+    [data-testid="stMetric"] {
+        background: rgba(12, 18, 15, 0.95);
+        border: 1px solid rgba(74, 222, 128, 0.14);
+        padding: 0.7rem;
+        border-radius: 16px;
+    }
+
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea,
+    [data-testid="stNumberInput"] input {
+        background-color: #101915 !important;
+        color: #ecfdf5 !important;
+        border: 1px solid #1f7a46 !important;
+        border-radius: 12px !important;
+    }
+
+    [data-baseweb="select"] > div {
+        background-color: #101915 !important;
+        color: #ecfdf5 !important;
+        border: 1px solid #1f7a46 !important;
+        border-radius: 12px !important;
+    }
+
+    h1, h2, h3, h4, h5, h6, p, label, div, span {
+        color: inherit;
     }
 
     @keyframes fadeUp {
@@ -288,7 +321,9 @@ st.markdown("""
         }
     }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 
 # =========================================================
@@ -495,7 +530,7 @@ def extract_title_and_abstract(text: str):
     m = re.search(
         r"abstract\s*(.*?)(introduction|keywords|\n\n)",
         text,
-        re.IGNORECASE | re.DOTALL
+        re.IGNORECASE | re.DOTALL,
     )
     if m:
         abstract = m.group(1).strip()
@@ -515,7 +550,7 @@ STOPWORDS = {
     "those", "as", "it", "its", "their", "our", "we", "they", "he", "she", "you",
     "i", "his", "her", "them", "than", "then", "which", "who", "whom", "what",
     "when", "where", "why", "how", "can", "could", "should", "would", "may",
-    "might", "will", "shall", "do", "does", "did", "done", "have", "has", "had"
+    "might", "will", "shall", "do", "does", "did", "done", "have", "has", "had",
 }
 
 ACADEMIC_WORDS = {
@@ -523,7 +558,7 @@ ACADEMIC_WORDS = {
     "evaluation", "evidence", "experiment", "framework", "hypothesis", "implementation",
     "investigation", "method", "methodology", "model", "objective", "outcome",
     "performance", "process", "research", "result", "study", "system", "theory",
-    "validation", "significance", "rigour", "contribution"
+    "validation", "significance", "rigour", "contribution",
 }
 
 SECTION_PATTERNS = {
@@ -534,7 +569,7 @@ SECTION_PATTERNS = {
     "results_present": r"\bresults?\b",
     "discussion_present": r"\bdiscussion\b",
     "conclusion_present": r"(conclusion|conclusions|concluding remarks)",
-    "references_present": r"(references|bibliography)"
+    "references_present": r"(references|bibliography)",
 }
 
 COUNT_PATTERNS = {
@@ -567,7 +602,7 @@ COUNT_PATTERNS = {
     "interview_mentions": r"\binterview(s)?\b",
     "case_study_mentions": r"\bcase study|case studies\b",
     "fieldwork_mentions": r"\bfieldwork\b",
-    "real_world_mentions": r"\breal[- ]world\b"
+    "real_world_mentions": r"\breal[- ]world\b",
 }
 
 
@@ -791,7 +826,7 @@ def build_feature_matrix(df_input: pd.DataFrame, bundle: dict):
     X_text = embedder.encode(
         text_values,
         convert_to_numpy=True,
-        normalize_embeddings=True
+        normalize_embeddings=True,
     )
 
     X_cat = np.empty((len(df_input), 0))
@@ -916,11 +951,11 @@ def render_avatar_assistant(messages, title="Ava · App Guide", subtitle="Ask me
             display: flex;
             align-items: center;
             gap: 18px;
-            background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(241,245,249,0.95));
-            border: 1px solid rgba(148,163,184,0.18);
+            background: linear-gradient(135deg, rgba(12,20,15,0.96), rgba(20,35,28,0.96));
+            border: 1px solid rgba(74,222,128,0.16);
             border-radius: 24px;
             padding: 20px;
-            box-shadow: 0 14px 28px rgba(15,23,42,0.08);
+            box-shadow: 0 14px 28px rgba(0,0,0,0.22);
             overflow: hidden;
         }}
 
@@ -936,7 +971,7 @@ def render_avatar_assistant(messages, title="Ava · App Guide", subtitle="Ask me
             position: absolute;
             inset: 0;
             border-radius: 50%;
-            background: radial-gradient(circle, rgba(99,102,241,0.28), rgba(99,102,241,0.02) 68%);
+            background: radial-gradient(circle, rgba(34,197,94,0.30), rgba(34,197,94,0.03) 68%);
             animation: pulse 2.2s infinite ease-in-out;
         }}
 
@@ -944,42 +979,42 @@ def render_avatar_assistant(messages, title="Ava · App Guide", subtitle="Ask me
             position: absolute;
             inset: 12px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
+            background: linear-gradient(135deg, #166534 0%, #22c55e 100%);
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 46px;
             color: white;
-            box-shadow: 0 10px 22px rgba(79,70,229,0.25);
+            box-shadow: 0 10px 22px rgba(34,197,94,0.22);
             animation: floaty 3s infinite ease-in-out;
         }}
 
         .bubble {{
             flex: 1;
-            background: white;
+            background: #0f1713;
             border-radius: 22px;
             padding: 16px 18px;
-            border: 1px solid rgba(148,163,184,0.18);
-            box-shadow: 0 10px 20px rgba(15,23,42,0.06);
+            border: 1px solid rgba(74,222,128,0.16);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.16);
             min-height: 110px;
         }}
 
         .name {{
             font-size: 16px;
             font-weight: 800;
-            color: #0f172a;
+            color: #ecfdf5;
             margin-bottom: 6px;
         }}
 
         .subtitle {{
             font-size: 13px;
-            color: #64748b;
+            color: #bbf7d0;
             margin-bottom: 8px;
         }}
 
         .text {{
             font-size: 16px;
-            color: #1e293b;
+            color: #f0fdf4;
             line-height: 1.6;
             min-height: 48px;
             transition: opacity 0.35s ease;
@@ -995,7 +1030,7 @@ def render_avatar_assistant(messages, title="Ava · App Guide", subtitle="Ask me
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            background: #94a3b8;
+            background: #86efac;
             animation: blink 1.4s infinite ease-in-out;
         }}
 
@@ -1193,7 +1228,7 @@ def reset_assistant_chat():
             "content": (
                 "Hello — I’m your app guide. Ask me how to use the system, "
                 "what metadata means, or how to present the app in your demo."
-            )
+            ),
         }
     ]
     st.session_state["assistant_previous_response_id"] = None
@@ -1244,13 +1279,16 @@ def render_help_chat(current_page: str, model_exists: bool, lookup_exists: bool)
         st.rerun()
 
     for msg in st.session_state["helper_messages"]:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+        role = msg.get("role", "assistant")
+        if role not in ["user", "assistant"]:
+            role = "assistant"
+        with st.chat_message(role):
+            st.markdown(msg.get("content", ""))
 
     with st.form(key=f"assistant_form_{current_page}", clear_on_submit=True):
         typed_prompt = st.text_input(
             "Type your question here",
-            placeholder="Ask about the app, metadata, prediction flow, or demo tips..."
+            placeholder="Ask about the app, metadata, prediction flow, or demo tips...",
         )
         submitted = st.form_submit_button("Send")
 
@@ -1265,10 +1303,7 @@ def render_help_chat(current_page: str, model_exists: bool, lookup_exists: bool)
 # SIDEBAR
 # =========================================================
 st.sidebar.markdown("## Navigation")
-page = st.sidebar.radio(
-    "Go to",
-    ["Home", "Predict", "About"]
-)
+page = st.sidebar.radio("Go to", ["Home", "Predict", "About"])
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("## System Status")
@@ -1306,7 +1341,8 @@ st.sidebar.info(
 # HOME
 # =========================================================
 if page == "Home":
-    st.markdown("""
+    st.markdown(
+        """
     <div class="hero-box">
         <div class="hero-title">Research Paper Quality Prediction System</div>
         <div class="hero-subtitle">
@@ -1314,41 +1350,52 @@ if page == "Home":
             <b>4★</b> or <b>Not 4★</b>, using textual content, engineered PDF-based indicators, and metadata features.
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     render_avatar_assistant(
         messages=[
             "Welcome! I can guide you through the paper prediction workflow.",
             "Upload a known paper to auto-load metadata from the lookup file.",
             "For new papers, I’ll help you understand which metadata fields to fill in.",
-            "Use the help chat below if you have any doubts about the app or demo."
+            "Use the help chat below if you have any doubts about the app or demo.",
         ],
         title="Ava · Welcome Guide",
-        subtitle="Your animated app assistant"
+        subtitle="Your animated app assistant",
     )
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.markdown("""
+        st.markdown(
+            """
         <div class="stat-card">
             <div class="stat-value">UOA 11</div>
             <div class="stat-label">Project Focus</div>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
     with c2:
-        st.markdown("""
+        st.markdown(
+            """
         <div class="stat-card">
             <div class="stat-value">Binary</div>
             <div class="stat-label">Classification Task</div>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
     with c3:
-        st.markdown("""
+        st.markdown(
+            """
         <div class="stat-card">
             <div class="stat-value">4★ vs Not 4★</div>
             <div class="stat-label">Prediction Target</div>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
 
     st.markdown("<div class='section-card'>", unsafe_allow_html=True)
     st.markdown("<div class='soft-heading'>Project Overview</div>", unsafe_allow_html=True)
@@ -1366,7 +1413,8 @@ if page == "Home":
     col_a, col_b = st.columns(2)
 
     with col_a:
-        st.markdown("""
+        st.markdown(
+            """
         <div class="mini-card">
             <div class="soft-heading">Known Paper Mode</div>
             <div class="small-muted">
@@ -1374,10 +1422,13 @@ if page == "Home":
                 the paper using paper ID, normalized filename, or title, and then auto-loads the corresponding metadata.
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
 
     with col_b:
-        st.markdown("""
+        st.markdown(
+            """
         <div class="mini-card">
             <div class="soft-heading">New Paper Mode</div>
             <div class="small-muted">
@@ -1385,7 +1436,9 @@ if page == "Home":
                 features. Missing metadata can then be entered manually before running prediction.
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
 
     st.markdown("<div class='section-card'>", unsafe_allow_html=True)
     st.markdown("<div class='soft-heading'>Workflow</div>", unsafe_allow_html=True)
@@ -1404,7 +1457,8 @@ if page == "Home":
 # PREDICT
 # =========================================================
 elif page == "Predict":
-    st.markdown("""
+    st.markdown(
+        """
     <div class="hero-box">
         <div class="hero-title">Prediction Workspace</div>
         <div class="hero-subtitle">
@@ -1412,17 +1466,19 @@ elif page == "Predict":
             and run the hybrid model to predict whether the paper is likely to be 4★ or Not 4★.
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     render_avatar_assistant(
         messages=[
             "Start by entering a title or uploading a PDF.",
             "I’ll help the app identify known papers through metadata lookup.",
             "Check the metadata carefully before running prediction.",
-            "Use the help chat below if you want demo tips or explanations."
+            "Use the help chat below if you want demo tips or explanations.",
         ],
         title="Ava · Prediction Guide",
-        subtitle="Helping you through the prediction process"
+        subtitle="Helping you through the prediction process",
     )
 
     lookup_df = load_metadata_lookup()
@@ -1437,14 +1493,15 @@ elif page == "Predict":
         manual_text = st.text_area(
             "Abstract / Extracted Text / Key Paper Content",
             height=240,
-            placeholder="Paste abstract or important paper text here..."
+            placeholder="Paste abstract or important paper text here...",
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
     with top_right:
         st.markdown("<div class='section-card'>", unsafe_allow_html=True)
         st.subheader("Input Guidance")
-        st.markdown("""
+        st.markdown(
+            """
         <div class="glass-note">
             <b>Best results:</b><br>
             • upload a readable PDF for known papers<br>
@@ -1452,7 +1509,9 @@ elif page == "Predict":
             • confirm the metadata fields before prediction<br>
             • use manual text when PDF extraction is weak
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
     text_for_features = manual_text
@@ -1476,19 +1535,19 @@ elif page == "Predict":
                 text_for_features = pdf_text
                 st.markdown(
                     '<div class="status-good">PDF text extracted successfully. Abstract-style content will be used for prediction.</div>',
-                    unsafe_allow_html=True
+                    unsafe_allow_html=True,
                 )
             else:
                 text_for_features = pdf_text
                 abstract_for_model = manual_text if manual_text.strip() else pdf_text[:3000]
                 st.markdown(
                     '<div class="status-warn">PDF text was extracted, but the abstract could not be isolated clearly. Fallback text will be used.</div>',
-                    unsafe_allow_html=True
+                    unsafe_allow_html=True,
                 )
         else:
             st.markdown(
                 '<div class="status-warn">PDF text could not be extracted. The manually entered text will be used instead.</div>',
-                unsafe_allow_html=True
+                unsafe_allow_html=True,
             )
 
     matched_metadata = find_metadata_match(final_title, uploaded_filename, lookup_df)
@@ -1496,12 +1555,12 @@ elif page == "Predict":
     if matched_metadata:
         st.markdown(
             '<div class="status-good">Known paper matched in metadata lookup. Stored metadata has been loaded automatically.</div>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
     else:
         st.markdown(
             '<div class="status-info">No lookup match was found. Please enter metadata manually for the best possible prediction.</div>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
     metric_1, metric_2, metric_3 = st.columns(3)
@@ -1542,7 +1601,11 @@ elif page == "Predict":
         default_institution = matched_metadata.get("Institution name", "Unknown") if matched_metadata else "Unknown"
         default_ukprn = matched_metadata.get("Institution UKPRN code", 0) if matched_metadata else 0
         default_main_panel = matched_metadata.get("Main panel", "B") if matched_metadata else "B"
-        default_uoa = matched_metadata.get("Unit of assessment name", "Computer Science and Informatics") if matched_metadata else "Computer Science and Informatics"
+        default_uoa = (
+            matched_metadata.get("Unit of assessment name", "Computer Science and Informatics")
+            if matched_metadata
+            else "Computer Science and Informatics"
+        )
         default_oa = matched_metadata.get("Open access status", "Unknown") if matched_metadata else "Unknown"
         default_year = matched_metadata.get("Year", 0) if matched_metadata else 0
 
@@ -1550,7 +1613,7 @@ elif page == "Predict":
             "Citation Count",
             min_value=0.0,
             value=float(safe_float(default_citation, 0)),
-            step=1.0
+            step=1.0,
         )
         publisher = st.text_input("Publisher", str(default_publisher))
         institution_name = st.text_input("Institution Name", str(default_institution))
@@ -1562,7 +1625,7 @@ elif page == "Predict":
             min_value=0,
             max_value=2100,
             value=safe_int(default_year, 0),
-            step=1
+            step=1,
         )
 
         oa_options = [
@@ -1570,13 +1633,13 @@ elif page == "Predict":
             "Out of scope for open access requirements",
             "Not compliant",
             "Other exception",
-            "Unknown"
+            "Unknown",
         ]
         default_oa = str(default_oa) if str(default_oa) in oa_options else "Unknown"
         open_access_status = st.selectbox(
             "Open Access Status",
             oa_options,
-            index=oa_options.index(default_oa)
+            index=oa_options.index(default_oa),
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1590,7 +1653,7 @@ elif page == "Predict":
                 engineered_features = build_engineered_features(
                     raw_text=text_for_features,
                     page_count=detected_page_count,
-                    title=final_title
+                    title=final_title,
                 )
 
                 with st.spinner("Running prediction..."):
@@ -1614,12 +1677,12 @@ elif page == "Predict":
                 if pred == 1:
                     st.markdown(
                         '<div class="result-good">Predicted Class: 4★ Paper</div>',
-                        unsafe_allow_html=True
+                        unsafe_allow_html=True,
                     )
                 else:
                     st.markdown(
                         '<div class="result-warn">Predicted Class: Not 4★ Paper</div>',
-                        unsafe_allow_html=True
+                        unsafe_allow_html=True,
                     )
 
                 if confidence is not None:
@@ -1652,7 +1715,8 @@ elif page == "Predict":
 # ABOUT
 # =========================================================
 elif page == "About":
-    st.markdown("""
+    st.markdown(
+        """
     <div class="hero-box">
         <div class="hero-title">About the Project</div>
         <div class="hero-subtitle">
@@ -1660,23 +1724,26 @@ elif page == "About":
             for Unit of Assessment 11: Computer Science and Informatics.
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     render_avatar_assistant(
         messages=[
             "This project focuses on predicting 4★ versus Not 4★ papers.",
             "The model combines text, engineered PDF indicators, and metadata.",
             "Known papers can use automatic lookup; new papers may need manual metadata.",
-            "You can ask me questions about the app in the chat below."
+            "You can ask me questions about the app in the chat below.",
         ],
         title="Ava · Project Guide",
-        subtitle="Explaining the project and the app"
+        subtitle="Explaining the project and the app",
     )
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("""
+        st.markdown(
+            """
         <div class="mini-card">
             <div class="soft-heading">Research Context</div>
             <div class="small-muted">
@@ -1684,10 +1751,13 @@ elif page == "About":
                 using a hybrid combination of textual features, engineered PDF-based indicators, and metadata.
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
 
     with col2:
-        st.markdown("""
+        st.markdown(
+            """
         <div class="mini-card">
             <div class="soft-heading">Current Scope</div>
             <div class="small-muted">
@@ -1695,7 +1765,9 @@ elif page == "About":
                 4★ or Not 4★. It supports metadata lookup for known papers and manual metadata entry for new papers.
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
 
     st.markdown("<div class='section-card'>", unsafe_allow_html=True)
     st.subheader("Runtime Dependency Check")
