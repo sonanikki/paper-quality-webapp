@@ -6,4 +6,4 @@ sentence-transformers
 pypdf
 torch
 joblib
-openai
+openai>=1.0.0
