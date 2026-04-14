@@ -5,6 +5,7 @@ import uuid
 import pickle
 import importlib
 from io import BytesIO
+from pathlib import Path
 from datetime import datetime
 
 import numpy as np
@@ -29,8 +30,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-MODEL_PATH = "binary_hybrid_logistic.pkl"
-LOOKUP_PATH = "metadata_lookup.csv"
+BASE_DIR = Path(__file__).parent
+MODEL_PATH = BASE_DIR / "binary_hybrid_logistic.pkl"
+LOOKUP_PATH = BASE_DIR / "metadata_lookup.csv"
 
 APP_ASSISTANT_SYSTEM_PROMPT = """
 You are a friendly in-app assistant for a Streamlit application called
@@ -431,7 +433,7 @@ def check_runtime_dependencies():
 # =========================================================
 @st.cache_resource
 def load_model_bundle():
-    if not os.path.exists(MODEL_PATH):
+    if not MODEL_PATH.exists():
         raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
 
     with open(MODEL_PATH, "rb") as f:
@@ -442,13 +444,12 @@ def load_model_bundle():
 @st.cache_resource
 def load_embedder(embedder_name: str):
     from sentence_transformers import SentenceTransformer
- sentence_transformers import SentenceTransformer
     return SentenceTransformer(embedder_name)
 
 
 @st.cache_data
 def load_metadata_lookup():
-    if not os.path.exists(LOOKUP_PATH):
+    if not LOOKUP_PATH.exists():
         return pd.DataFrame()
 
     df = pd.read_csv(LOOKUP_PATH)
@@ -506,7 +507,7 @@ def extract_pdf_text_and_pages(uploaded_file):
     try:
         from pypdf import PdfReader
 
-        file_bytes = uploaded_file.read()
+        file_bytes = uploaded_file.getvalue()
         reader = PdfReader(BytesIO(file_bytes))
         page_count = len(reader.pages)
 
@@ -1297,8 +1298,8 @@ page = st.sidebar.radio("Go to", ["Home", "Predict", "About"])
 st.sidebar.markdown("---")
 st.sidebar.markdown("## System Status")
 
-model_exists = os.path.exists(MODEL_PATH)
-lookup_exists = os.path.exists(LOOKUP_PATH)
+model_exists = MODEL_PATH.exists()
+lookup_exists = LOOKUP_PATH.exists()
 
 if model_exists:
     st.sidebar.success("Model file detected")
@@ -1556,7 +1557,12 @@ elif page == "Predict":
     with metric_2:
         st.metric("PDF Uploaded", "Yes" if uploaded_pdf is not None else "No")
     with metric_3:
-        st.metric("Metadata Filled", "Auto / Manual" if uploaded_pdf is not None else "Pending")
+        if matched_metadata:
+            st.metric("Metadata Status", "Auto-filled")
+        elif uploaded_pdf is not None or manual_text.strip():
+            st.metric("Metadata Status", "Manual review")
+        else:
+            st.metric("Metadata Status", "Pending")
 
     left_col, right_col = st.columns([1.1, 1])
 
@@ -1618,9 +1624,13 @@ elif page == "Predict":
         oa_options = [
             "Compliant",
             "Out of scope for open access requirements",
-            "Not compliant",
-            "Other exception",
             "Unknown",
+            "Technical exception",
+            "Deposit exception",
+            "Exception within 3 months of publication",
+            "Not compliant",
+            "Access exception",
+            "Other exception",
         ]
         default_oa = str(default_oa) if str(default_oa) in oa_options else "Unknown"
         open_access_status = st.selectbox(
