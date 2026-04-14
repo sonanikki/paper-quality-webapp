@@ -34,25 +34,25 @@ MODEL_PATH = BASE_DIR / "binary_hybrid_logistic.pkl"
 LOOKUP_PATH = BASE_DIR / "metadata_lookup.csv"
 
 APP_ASSISTANT_SYSTEM_PROMPT = """
-You are a friendly in-app assistant for a Streamlit application called
+You are a helpful assistant inside a Streamlit application called
 'Research Paper Quality Prediction System'.
 
-Your job is ONLY to help users with:
-- how to use the app
-- what the prediction workflow means
-- why metadata is needed
-- what 4★ vs Not 4★ means in this project
-- what citation count / publisher / institution / open access fields are for
-- basic demo or viva guidance
-- how PDF upload and paper processing work
+You should answer the user's question clearly and helpfully, even when the question
+is not strictly limited to the app itself.
 
-Do NOT mention internal datasets, backend lookup files, hidden matching rules,
-or implementation details unless the user explicitly asks for technical details.
+Priorities:
+1. If the question is about the app, the model, metadata, workflow, PDF upload,
+   paper prediction, viva/demo guidance, or research quality prediction, answer
+   with that context in mind.
+2. If the question is general, answer it normally in a concise and useful way.
+3. If the question is unclear, ask for clarification briefly.
 
-Do NOT answer unrelated general knowledge questions in depth.
-If the user asks something outside the app's scope, politely redirect them
-back to app-related help.
+When the user asks about this project, keep your answers aligned with:
+- binary classification: 4★ vs Not 4★
+- UOA 11: Computer Science and Informatics
+- hybrid prediction using text, PDF-derived features, and metadata
 
+Avoid inventing hidden implementation details.
 Keep answers clear, supportive, and concise.
 """
 
@@ -65,8 +65,8 @@ if "helper_messages" not in st.session_state:
         {
             "role": "assistant",
             "content": (
-                "Hello — I’m your app guide. Ask me how to use the system, "
-                "what metadata means, or how to present the app in your demo."
+                "Hello — I’m your app guide. You can ask me about the app, "
+                "the project, or general questions as well."
             ),
         }
     ]
@@ -1095,6 +1095,12 @@ def render_avatar_assistant(messages, title="Ava · App Guide", subtitle="Ask me
 def local_app_help(question: str) -> str:
     q = normalize_text(question)
 
+    if "ref" in q:
+        return (
+            "REF usually refers to the Research Excellence Framework in the UK, "
+            "which is a system for assessing the quality of research in higher education institutions."
+        )
+
     if any(x in q for x in ["how do i use", "how to use", "how can i use", "start", "begin", "upload"]):
         return (
             "Go to the Predict page, upload a PDF, review the extracted text, "
@@ -1127,12 +1133,12 @@ def local_app_help(question: str) -> str:
         )
 
     return (
-        "I can help with using the app, metadata meaning, prediction flow, and demo tips. "
-        "Try asking something like: 'How do I use this app?' or 'Why is metadata needed?'"
+        "I can answer general questions as well as app-related questions. "
+        "You can ask about the project, the workflow, or broader topics too."
     )
 
 
-def extract_response_text(response) -> str:
+def extract_response_text_from_responses_api(response) -> str:
     output_text = getattr(response, "output_text", "")
     if output_text and str(output_text).strip():
         return str(output_text).strip()
@@ -1153,10 +1159,22 @@ def extract_response_text(response) -> str:
     return "\n".join(parts).strip()
 
 
+def extract_response_text_from_chat_completion(response) -> str:
+    try:
+        choices = getattr(response, "choices", None)
+        if choices:
+            message = choices[0].message
+            content = getattr(message, "content", "")
+            if content and str(content).strip():
+                return str(content).strip()
+    except Exception:
+        pass
+    return ""
+
+
 def ask_gpt_helper(question: str, current_page: str, model_exists: bool, lookup_exists: bool) -> str:
     api_key = get_secret_value("OPENAI_API_KEY", "")
     configured_model = get_secret_value("OPENAI_MODEL", "").strip()
-    models_to_try = [m for m in [configured_model, "gpt-4o-mini"] if m]
 
     if not OPENAI_AVAILABLE:
         raise RuntimeError("The openai package is not installed.")
@@ -1173,9 +1191,14 @@ Metadata lookup available: {'Yes' if lookup_exists else 'No'}
 Session ID: {st.session_state['assistant_session_id']}
 """
 
+    candidate_models = []
+    for m in [configured_model, "gpt-4o-mini", "gpt-4.1-mini"]:
+        if m and m not in candidate_models:
+            candidate_models.append(m)
+
     last_error = None
 
-    for model_name in models_to_try:
+    for model_name in candidate_models:
         try:
             response = client.responses.create(
                 model=model_name,
@@ -1183,11 +1206,27 @@ Session ID: {st.session_state['assistant_session_id']}
                 input=f"{app_context}\nUser question: {question}",
                 max_output_tokens=220,
             )
-
-            text = extract_response_text(response)
+            text = extract_response_text_from_responses_api(response)
             if text:
                 return text
+        except Exception as e:
+            last_error = e
 
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": APP_ASSISTANT_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": f"{app_context}\nUser question: {question}",
+                    },
+                ],
+                max_tokens=220,
+            )
+            text = extract_response_text_from_chat_completion(response)
+            if text:
+                return text
         except Exception as e:
             last_error = e
 
@@ -1201,11 +1240,12 @@ def respond_from_assistant(question: str, current_page: str, model_exists: bool,
     if st.session_state.get("use_gpt_helper", True) and gpt_helper_ready():
         try:
             return ask_gpt_helper(question, current_page, model_exists, lookup_exists)
-        except Exception:
+        except Exception as e:
+            st.warning(f"GPT helper runtime issue: {e}")
             fallback = local_app_help(question)
             return (
                 fallback
-                + "\n\n_(The GPT helper was unavailable just now, so I answered using the built-in app guide.)_"
+                + "\n\n_(The GPT helper was unavailable just now, so I answered using the built-in helper.)_"
             )
 
     return local_app_help(question)
@@ -1216,8 +1256,8 @@ def reset_assistant_chat():
         {
             "role": "assistant",
             "content": (
-                "Hello — I’m your app guide. Ask me how to use the system, "
-                "what metadata means, or how to present the app in your demo."
+                "Hello — I’m your app guide. You can ask me about the app, "
+                "the project, or general questions as well."
             ),
         }
     ]
@@ -1277,7 +1317,7 @@ def render_help_chat(current_page: str, model_exists: bool, lookup_exists: bool)
     with st.form(key=f"assistant_form_{current_page}", clear_on_submit=True):
         typed_prompt = st.text_input(
             "Type your question here",
-            placeholder="Ask about the app, metadata, prediction flow, or demo tips...",
+            placeholder="Ask about the app, the project, or a general question...",
         )
         submitted = st.form_submit_button("Send")
 
@@ -1347,7 +1387,7 @@ if page == "Home":
             "Welcome! I can guide you through the paper prediction workflow.",
             "Upload a paper to begin processing.",
             "Metadata can support the prediction alongside the paper text.",
-            "Use the help chat below if you have any doubts about the app or demo.",
+            "You can also ask broader questions here.",
         ],
         title="Ava · Welcome Guide",
         subtitle="Your animated app assistant",
