@@ -3,7 +3,6 @@ import re
 import json
 import uuid
 import pickle
-import importlib
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime
@@ -71,9 +70,6 @@ if "helper_messages" not in st.session_state:
             ),
         }
     ]
-
-if "assistant_previous_response_id" not in st.session_state:
-    st.session_state["assistant_previous_response_id"] = None
 
 if "assistant_session_id" not in st.session_state:
     st.session_state["assistant_session_id"] = str(uuid.uuid4())
@@ -407,25 +403,6 @@ def get_secret_value(key_name: str, default: str = "") -> str:
 def gpt_helper_ready() -> bool:
     api_key = get_secret_value("OPENAI_API_KEY", "")
     return OPENAI_AVAILABLE and bool(api_key)
-
-
-# =========================================================
-# RUNTIME CHECK
-# =========================================================
-def check_runtime_dependencies():
-    results = {}
-    package_names = ["sklearn", "pypdf", "sentence_transformers", "torch", "openai"]
-
-    for pkg in package_names:
-        try:
-            mod = importlib.import_module(pkg)
-            version = getattr(mod, "__version__", "version unknown")
-            results[pkg] = f"OK ({version})"
-        except Exception as e:
-            results[pkg] = f"ERROR: {e}"
-
-    results["gpt_helper_configured"] = "Yes" if gpt_helper_ready() else "No"
-    return results
 
 
 # =========================================================
@@ -1155,9 +1132,31 @@ def local_app_help(question: str) -> str:
     )
 
 
+def extract_response_text(response) -> str:
+    output_text = getattr(response, "output_text", "")
+    if output_text and str(output_text).strip():
+        return str(output_text).strip()
+
+    parts = []
+    try:
+        for item in getattr(response, "output", []) or []:
+            if getattr(item, "type", None) == "message":
+                for content in getattr(item, "content", []) or []:
+                    content_type = getattr(content, "type", None)
+                    if content_type in {"output_text", "text"}:
+                        text = getattr(content, "text", "")
+                        if text:
+                            parts.append(str(text))
+    except Exception:
+        pass
+
+    return "\n".join(parts).strip()
+
+
 def ask_gpt_helper(question: str, current_page: str, model_exists: bool, lookup_exists: bool) -> str:
     api_key = get_secret_value("OPENAI_API_KEY", "")
-    model_name = get_secret_value("OPENAI_MODEL", "gpt-4.1-mini")
+    configured_model = get_secret_value("OPENAI_MODEL", "").strip()
+    models_to_try = [m for m in [configured_model, "gpt-4o-mini"] if m]
 
     if not OPENAI_AVAILABLE:
         raise RuntimeError("The openai package is not installed.")
@@ -1174,34 +1173,35 @@ Metadata lookup available: {'Yes' if lookup_exists else 'No'}
 Session ID: {st.session_state['assistant_session_id']}
 """
 
-    kwargs = {
-        "model": model_name,
-        "instructions": APP_ASSISTANT_SYSTEM_PROMPT,
-        "input": f"{app_context}\nUser question: {question}",
-        "max_output_tokens": 260,
-    }
+    last_error = None
 
-    previous_response_id = st.session_state.get("assistant_previous_response_id")
-    if previous_response_id:
-        kwargs["previous_response_id"] = previous_response_id
+    for model_name in models_to_try:
+        try:
+            response = client.responses.create(
+                model=model_name,
+                instructions=APP_ASSISTANT_SYSTEM_PROMPT,
+                input=f"{app_context}\nUser question: {question}",
+                max_output_tokens=220,
+            )
 
-    response = client.responses.create(**kwargs)
+            text = extract_response_text(response)
+            if text:
+                return text
 
-    st.session_state["assistant_previous_response_id"] = getattr(response, "id", None)
+        except Exception as e:
+            last_error = e
 
-    output_text = getattr(response, "output_text", "")
-    if output_text and str(output_text).strip():
-        return str(output_text).strip()
+    if last_error is not None:
+        raise RuntimeError(f"GPT helper request failed: {last_error}")
 
-    return "I could not generate a reply just now. Please try again."
+    raise RuntimeError("The model returned an empty response.")
 
 
 def respond_from_assistant(question: str, current_page: str, model_exists: bool, lookup_exists: bool) -> str:
     if st.session_state.get("use_gpt_helper", True) and gpt_helper_ready():
         try:
             return ask_gpt_helper(question, current_page, model_exists, lookup_exists)
-        except Exception as e:
-            st.error(f"GPT helper runtime error: {e}")
+        except Exception:
             fallback = local_app_help(question)
             return (
                 fallback
@@ -1221,7 +1221,6 @@ def reset_assistant_chat():
             ),
         }
     ]
-    st.session_state["assistant_previous_response_id"] = None
 
 
 def handle_assistant_prompt(prompt: str, current_page: str, model_exists: bool, lookup_exists: bool):
@@ -1463,7 +1462,7 @@ elif page == "Predict":
             "Start by entering a title or uploading a PDF.",
             "The app will extract text and try to populate metadata when available.",
             "You can review or complete the metadata fields before prediction.",
-            "Use the help chat below if you want explanation or demo tips.",
+            "Use the information on this page to run the model confidently.",
         ],
         title="Ava · Prediction Guide",
         subtitle="Helping you through the prediction process",
@@ -1642,7 +1641,7 @@ elif page == "Predict":
 
     if st.button("Run Prediction"):
         if not final_title.strip():
-            st.error("Please enter the paper title, or upload a PDF with a readable first line/title.")
+            st.error("Please enter the paper title, or upload a PDF with a readable first line or title.")
         elif not abstract_for_model.strip():
             st.error("Please provide paper text or upload a readable PDF.")
         else:
@@ -1705,8 +1704,6 @@ elif page == "Predict":
             except Exception as e:
                 st.error(f"Prediction failed: {e}")
 
-    render_help_chat("Predict", model_exists, lookup_exists)
-
 
 # =========================================================
 # ABOUT
@@ -1730,7 +1727,7 @@ elif page == "About":
             "This project focuses on predicting 4★ versus Not 4★ papers.",
             "The model combines text, engineered PDF indicators, and metadata.",
             "The system can use metadata alongside extracted paper content.",
-            "You can ask me questions about the app in the chat below.",
+            "This page explains the scope and purpose of the application.",
         ],
         title="Ava · Project Guide",
         subtitle="Explaining the project and the app",
@@ -1767,11 +1764,13 @@ elif page == "About":
         )
 
     st.markdown("<div class='section-card'>", unsafe_allow_html=True)
-    st.subheader("Runtime Dependency Check")
-    st.json(check_runtime_dependencies())
+    st.subheader("System Note")
+    st.write(
+        "This application is designed to support a hybrid paper-quality prediction workflow. "
+        "It combines extracted paper content, engineered PDF-derived indicators, and metadata "
+        "to produce a final binary prediction."
+    )
     st.markdown("</div>", unsafe_allow_html=True)
-
-    render_help_chat("About", model_exists, lookup_exists)
 
 st.markdown(
     """
